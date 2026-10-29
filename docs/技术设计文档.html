@@ -1,0 +1,713 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI 运维故障分析与脚本助手 · 技术设计文档</title>
+<style>
+  :root {
+    --ink: #1a1f26;
+    --ink-2: #4a5563;
+    --ink-3: #6b7785;
+    --line: #e3e8ef;
+    --line-soft: #eef1f5;
+    --bg: #ffffff;
+    --bg-soft: #f7f9fb;
+    --accent: #1f6feb;
+    --code-bg: #f6f8fa;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: -apple-system, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    font-size: 15.5px; line-height: 1.78;
+  }
+  .doc { max-width: 920px; margin: 0 auto; padding: 56px 40px 96px; }
+  h1 { font-size: 30px; line-height: 1.35; margin: 0 0 8px; letter-spacing: -.2px; }
+  h1 + p { color: var(--ink-3); font-size: 14px; margin-top: 0; }
+  h2 {
+    font-size: 22px; margin: 52px 0 16px; padding-bottom: 9px;
+    border-bottom: 1px solid var(--line); letter-spacing: -.1px;
+  }
+  h3 { font-size: 17.5px; margin: 34px 0 12px; color: #10161d; }
+  h4 { font-size: 15.5px; margin: 24px 0 8px; }
+  p { margin: 13px 0; }
+  strong { color: #0d131a; font-weight: 650; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code {
+    font-family: "JetBrains Mono", "Cascadia Mono", Consolas, "Liberation Mono",
+                 "Microsoft YaHei", "PingFang SC", monospace;
+    font-size: .88em; background: var(--code-bg); padding: 2px 5px;
+    border-radius: 4px; color: #b02a5b; border: 1px solid var(--line-soft);
+  }
+  pre.code {
+    background: var(--code-bg); border: 1px solid var(--line);
+    border-radius: 8px; padding: 16px 18px; overflow-x: auto; margin: 16px 0;
+    position: relative;
+  }
+  pre.code code {
+    background: none; border: 0; padding: 0; color: #24292f;
+    font-size: 12.8px; line-height: 1.62; white-space: pre;
+  }
+  /* 框图用更小的字号 + 允许横向滚动，保证框线不错位 */
+  pre.diagram code { font-size: 12px; line-height: 1.5; }
+  pre.diagram { background: #fbfcfd; }
+  blockquote {
+    margin: 18px 0; padding: 12px 18px; background: #f4f8ff;
+    border-left: 3px solid var(--accent); border-radius: 0 6px 6px 0;
+    color: var(--ink-2);
+  }
+  blockquote p { margin: 5px 0; }
+  ul, ol { margin: 12px 0; padding-left: 26px; }
+  li { margin: 6px 0; }
+  li > ul, li > ol { margin: 6px 0; }
+  hr { border: 0; border-top: 1px solid var(--line); margin: 40px 0; }
+  .table-wrap { overflow-x: auto; margin: 18px 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { border: 1px solid var(--line); padding: 8px 12px; vertical-align: top; }
+  th { background: var(--bg-soft); font-weight: 650; white-space: nowrap; }
+  tbody tr:nth-child(even) { background: #fcfdfe; }
+  @media print {
+    .doc { max-width: none; padding: 0; }
+    h2 { page-break-after: avoid; }
+    pre.code, table, blockquote { page-break-inside: avoid; }
+    pre.diagram code { font-size: 10.5px; }
+    body { font-size: 12.5px; }
+  }
+</style>
+</head>
+<body>
+<article class="doc">
+<h1 id="AI-运维故障分析与脚本助手-技术设计文档">AI 运维故障分析与脚本助手 · 技术设计文档</h1>
+<div class="table-wrap"><table><thead><tr><th style="text-align:left">项目</th><th style="text-align:left">内容</th></tr></thead><tbody>
+<tr><td style="text-align:left">文档版本</td><td style="text-align:left">v1.0</td></tr>
+<tr><td style="text-align:left">对应代码版本</td><td style="text-align:left">1.0.0（阶段 1–5 全部落地）</td></tr>
+<tr><td style="text-align:left">代码规模</td><td style="text-align:left">后端约 4,400 行 / 前端约 2,050 行（含样式），运行时仅依赖 <code>express</code></td></tr>
+<tr><td style="text-align:left">测试状态</td><td style="text-align:left">后端 74 项断言、浏览器 41 项断言、执行器单测全通过</td></tr>
+<tr><td style="text-align:left">运行方式</td><td style="text-align:left"><code>npm start</code>，无 API Key 自动进入演示模式，完整链路可离线跑通</td></tr>
+</tbody></table></div>
+<hr>
+<h2 id="目录">目录</h2>
+<ol><li><a href="#一这个系统能做什么">这个系统能做什么</a></li><li><a href="#二它刻意不做什么">它刻意不做什么</a></li><li><a href="#三整体架构与数据流">整体架构与数据流</a></li><li><a href="#四核心机制拆解">核心机制拆解</a></li><li><a href="#五关键设计决策与取舍">关键设计决策与取舍</a></li><li><a href="#六一次完整请求的生命周期">一次完整请求的生命周期</a></li><li><a href="#七测试策略">测试策略</a></li><li><a href="#八已知边界与生产化差距">已知边界与生产化差距</a></li><li><a href="#九代码地图">代码地图</a></li></ol>
+<hr>
+<h2 id="一-这个系统能做什么">一、这个系统能做什么</h2>
+<p>这个系统不是"给运维加一个聊天框"，而是把运维工作中<strong>四类高频、高风险、需要留痕</strong>的任务，做成了可执行、可审批、可回溯的闭环。</p>
+<p>下面按"你会怎么用它"来写，而不是按功能菜单来写。</p>
+<h3 id="场景-A-凌晨告警-需要快速定位根因">场景 A：凌晨告警，需要快速定位根因</h3>
+<p><strong>你会输入什么</strong></p>
+<p>一句话就够了，比如：</p>
+<blockquote><p>web-01 磁盘满了，Nginx 报 No space left on device</p></blockquote>
+<p>也可以直接点界面左侧的预置场景（磁盘写满 / Java OOM / 慢查询暴涨 / Redis 下线 / 网关 502），或者粘贴一段日志。</p>
+<p><strong>系统实际做了什么</strong></p>
+<p>它不会直接编一个答案给你，而是先<strong>自己去取证</strong>。这个过程是可见的——界面上会逐个亮起工具调用卡片：</p>
+<pre class="code"><code>1) list_hosts()               → 确认 5 台受管主机及其角色
+2) query_metrics(web-01, disk) → 拿到磁盘使用率时序，看到 96% 且仍在上涨
+3) get_alerts(web-01)          → 拿到该机未恢复告警，含 inode 告警
+4) query_logs(web-01, nginx, "space") → 捞到 No space left on device 原文
+5) check_services(web-01)      → 发现 filebeat = failed
+6) top_processes(web-01, mem)  → 排除进程异常占用</code></pre>
+<p>拿齐证据之后，才生成报告。</p>
+<p><strong>你会拿到什么</strong></p>
+<p>固定六段结构，每一段都要求引用具体数值或日志原文：</p>
+<div class="table-wrap"><table><thead><tr><th style="text-align:left">段落</th><th style="text-align:left">内容</th><th style="text-align:left">举例</th></tr></thead><tbody>
+<tr><td style="text-align:left">结论摘要</td><td style="text-align:left">一两句话定性</td><td style="text-align:left">磁盘空间（含 inode）耗尽导致 Nginx 无法写日志与 PID 文件</td></tr>
+<tr><td style="text-align:left">证据链</td><td style="text-align:left">每条结论对应哪次工具返回的哪个数值</td><td style="text-align:left"><code>disk</code> 使用率 96%；<code>inode</code> 使用率 98%</td></tr>
+<tr><td style="text-align:left">可能原因</td><td style="text-align:left"><strong>按可能性排序</strong>，并标注"为什么不是别的原因"</td><td style="text-align:left">高：日志未轮转；中：filebeat 中断导致上游堆积</td></tr>
+<tr><td style="text-align:left">排查步骤</td><td style="text-align:left">可直接照着敲的命令</td><td style="text-align:left"><code>du -sh /var/log/* | sort -h</code></td></tr>
+<tr><td style="text-align:left">修复建议</td><td style="text-align:left">短期止血 + 长期治理分开写</td><td style="text-align:left">短期清日志、长期配 logrotate</td></tr>
+<tr><td style="text-align:left">还需补充的信息</td><td style="text-align:left">诚实说明哪些结论因为缺数据而无法确认</td><td style="text-align:left">缺少 /data 分区历史增长曲线</td></tr>
+</tbody></table></div>
+<p><strong>为什么"证据链"是硬要求</strong></p>
+<p>因为运维最怕的不是没答案，而是<strong>一个看起来很合理但错的答案</strong>。这个系统在设计上禁止无依据输出——提示词里明确要求"每条结论必须引用工具返回的数值或日志原文"，同时演示引擎（无 Key 时使用的本地推理）也是按证据拼装报告的，不存在凭空生成。</p>
+<h3 id="场景-B-同事发来一个部署脚本-让你-review">场景 B：同事发来一个部署脚本，让你 review</h3>
+<p><strong>你会输入什么</strong></p>
+<p>把脚本贴进「脚本校错」页，或者点「载入示例」看内置的 <code>samples/risky-deploy.sh</code>（一份故意写得很危险的脚本）。</p>
+<p><strong>系统实际做了什么</strong></p>
+<p>三段式，且顺序不能反：</p>
+<ol><li><strong>本地规则引擎先跑一遍</strong>（毫秒级，20 类风险规则）。这一步不依赖网络、结果确定。</li><li><strong>AI 再审一遍补语义</strong>。规则只能抓模式，抓不到"这个业务逻辑有问题"；AI 输出约定 JSON Schema：<code>{summary, overall_risk, issues[{severity, line, risk, suggestion, patch}]}</code>。</li><li><strong>每一条修复都先给你看 diff</strong>。</li></ol>
+<p>示例脚本（<code>samples/risky-deploy.sh</code>）在第一段就会报出 14 项：</p>
+<div class="table-wrap"><table><thead><tr><th style="text-align:left">级别</th><th style="text-align:left">命中项</th></tr></thead><tbody>
+<tr><td style="text-align:left">critical</td><td style="text-align:left"><code>rm -rf</code> 作用于未加引号的变量 · <code>curl | bash</code> 下载即执行 · 批量修改系统账号密码</td></tr>
+<tr><td style="text-align:left">high</td><td style="text-align:left">缺少 <code>set -euo pipefail</code> · 明文机密写入 <code>DB_PASS</code> · 数据库密码走命令行参数 · 强制 <code>kill -9</code> · 对根路径/通配路径强制删除</td></tr>
+<tr><td style="text-align:left">medium</td><td style="text-align:left">缺少备份或回滚入口 · <code>cd</code> 后未校验是否成功 · <code>|| true</code> 吞掉失败</td></tr>
+<tr><td style="text-align:left">low</td><td style="text-align:left">缺少 <code>trap</code> 清理 · 固定 <code>sleep</code> 等待服务就绪 · 用 <code>$?</code> 判断上一条命令</td></tr>
+</tbody></table></div>
+<p><strong>你会拿到什么</strong></p>
+<p>风险清单 + 逐条 diff。<strong>点「确认应用」之前，原始脚本一个字都不会变。</strong></p>
+<p>补丁不是"让 AI 重写整个文件"，而是机器可执行的最小指令：</p>
+<pre class="code" data-lang="js"><code>{ type: 'replace', find: 'rm -rf $TARGET', replace: 'rm -rf "${TARGET:?TARGET 未设置}"' }
+{ type: 'insert',  anchor: 0, position: 'after', text: '\nset -euo pipefail' }</code></pre>
+<p>这样做的原因很实际：让模型自由改写整份文件，它很容易顺手改掉无关逻辑，而你在 diff 里看不出来。</p>
+<h3 id="场景-C-真的要动生产了-清理-7-天前日志">场景 C：真的要动生产了——清理 7 天前日志</h3>
+<p>这是整个系统最需要克制的地方。<strong>从"我想要"到"真的执行"，中间有四道卡口，一道都不能跳。</strong></p>
+<pre class="code"><code>意图 → 1)生成草稿 → 2)静态门禁 → 3)他人审批 → 4)隔离执行</code></pre>
+<p><strong>① 生成草稿</strong></p>
+<p>输入"清理 7 天前的过期日志"，命中 <code>log-cleanup</code> 模板，产出 52 行脚本。生成物<strong>天然带三层安全带</strong>：</p>
+<pre class="code" data-lang="bash"><code>set -euo pipefail                      # 出错即停，未定义变量即报错，管道失败即失败
+trap 'echo "[trap] 脚本中断退出"; exit 2' EXIT   # 中断也有兜底
+APPLY="${APPLY:-0}"                    # 默认 dry-run
+if [ "${1:-}" = "--apply" ]; then APPLY="1"; fi</code></pre>
+<p>不加 <code>--apply</code>，脚本只打印"将要删什么"，不动手。这是"默认安全"（secure by default），而不是"记得加 --dry-run"。</p>
+<p><strong>② 静态门禁</strong></p>
+<p>生成完立刻评估，两级判定：</p>
+<div class="table-wrap"><table><thead><tr><th style="text-align:left">级别</th><th style="text-align:left">后果</th><th style="text-align:left">触发示例</th></tr></thead><tbody>
+<tr><td style="text-align:left"><code>blocked</code></td><td style="text-align:left"><strong>直接拒绝，审批也救不回来</strong></td><td style="text-align:left"><code>rm -rf</code>、<code>mkfs</code>、<code>dd</code>、<code>shutdown/reboot</code>、<code>chpasswd</code>、<code>curl | bash</code>、<code>chmod 777</code>、写块设备、<code>DROP TABLE</code>、无 <code>WHERE</code> 的 <code>DELETE</code>、<code>userdel</code>、<code>systemctl stop/disable/mask</code></td></tr>
+<tr><td style="text-align:left"><code>needs_approval</code></td><td style="text-align:left">可以入库，但必须人工点头</td><td style="text-align:left"><code>find -delete</code>、<code>systemctl restart</code>、<code>kill</code>、<code>cp -f</code>/<code>mv -f</code></td></tr>
+</tbody></table></div>
+<p>界面上会直接看到红色「门禁拒绝」+ 具体原因，而不是提交之后才吃一个 403。</p>
+<p><strong>③ 他人审批</strong></p>
+<p>提交后进入审批队列，状态 <code>pending</code>。</p>
+<p>关键规则：<strong>提交人不能批准自己提交的变更</strong>。同一个人点「批准」按钮是灰的，鼠标悬停提示"不能批准自己提交的变更，请切换操作人"。要演示完整流程，得在顶栏换一个身份。</p>
+<p><strong>④ 隔离执行</strong></p>
+<p>批准后，点「在隔离环境执行」。执行前会<strong>重新跑一遍门禁</strong>——防止脚本在审批之后被人偷偷改过（TOCTOU 问题）。</p>
+<p>默认 <code>mock</code> 模式，逐行回显"会发生什么"，并明确标注「模拟执行·不产生真实副作用」。真跑用 <code>docker</code> 模式：</p>
+<pre class="code" data-lang="bash"><code>docker run --rm -i \
+  --network=none \
+  --memory=256m --cpus=0.5 --pids-limit=64 \
+  -v &lt;workspace&gt;:/work:ro -w /work \
+  alpine:3.19 sh -s</code></pre>
+<p>无网络、限内存、限 CPU、限进程数、工作区只读挂载、一次性容器。</p>
+<h3 id="场景-D-交接班-事后追溯-谁在什么时候批了什么">场景 D：交接班 / 事后追溯——谁在什么时候批了什么</h3>
+<p>点右上角「审计日志」，抽屉里是 append-only 的 JSONL 记录，每条带：</p>
+<pre class="code"><code>时间 · 事件类型 · 操作人 · 角色 · 入参 · 结果 · 耗时</code></pre>
+<p>覆盖的事件类型：<code>user_message</code>、<code>tool_call</code>、<code>tool_denied</code>、<code>approval_submit</code>、<code>approval_decision</code>、<code>exec_finished</code>、<code>gate_check</code>、<code>agent_done</code>、<code>llm_error</code>。</p>
+<p>可以按类型筛选，也可以 <code>GET /api/audit/export</code> 导出全量 JSON。</p>
+<h3 id="场景-E-权限分层-新人只能看-值班长才能批">场景 E：权限分层——新人只能看，值班长才能批</h3>
+<p>顶栏可切换四种身份，按钮会实时置灰/恢复：</p>
+<div class="table-wrap"><table><thead><tr><th style="text-align:left">角色</th><th style="text-align:left">能做什么</th><th style="text-align:left">现实对应</th></tr></thead><tbody>
+<tr><td style="text-align:left"><code>viewer</code> 观察员</td><td style="text-align:left">看分析、调只读工具、脚本体检、看审计</td><td style="text-align:left">一线 / 新人</td></tr>
+<tr><td style="text-align:left"><code>operator</code> 运维执行</td><td style="text-align:left">+ 生成脚本、提交审批</td><td style="text-align:left">一线运维</td></tr>
+<tr><td style="text-align:left"><code>approver</code> 变更审批人</td><td style="text-align:left">+ 批准/驳回、隔离执行</td><td style="text-align:left">值班负责人</td></tr>
+<tr><td style="text-align:left"><code>admin</code> 管理员</td><td style="text-align:left">全部（演示用）</td><td style="text-align:left">平台管理员</td></tr>
+</tbody></table></div>
+<p><strong>注意：前端置灰只是体验，真正的边界在服务端。</strong> 用 curl 带着 <code>x-ops-role: viewer</code> 头直接请求审批接口，一样是 403。</p>
+<h3 id="能力小结-一张表看完">能力小结（一张表看完）</h3>
+<div class="table-wrap"><table><thead><tr><th style="text-align:left">能力</th><th style="text-align:left">输入</th><th style="text-align:left">输出</th><th style="text-align:left">是否需要人确认</th><th style="text-align:left">是否有副作用</th></tr></thead><tbody>
+<tr><td style="text-align:left">故障分析</td><td style="text-align:left">一句话 / 日志 / 告警</td><td style="text-align:left">带证据链的六段式报告</td><td style="text-align:left">否（只读）</td><td style="text-align:left">无</td></tr>
+<tr><td style="text-align:left">脚本校错</td><td style="text-align:left">Shell 脚本</td><td style="text-align:left">风险清单 + 逐条 diff</td><td style="text-align:left"><strong>是</strong>（diff 确认）</td><td style="text-align:left">无（只改编辑器内容）</td></tr>
+<tr><td style="text-align:left">工具取证</td><td style="text-align:left">工具名 + 参数</td><td style="text-align:left">指标 / 日志 / 服务状态等</td><td style="text-align:left">否（只读）</td><td style="text-align:left">无</td></tr>
+<tr><td style="text-align:left">脚本生成</td><td style="text-align:left">变更意图</td><td style="text-align:left">带安全骨架的脚本草稿</td><td style="text-align:left">否（只生成）</td><td style="text-align:left">无</td></tr>
+<tr><td style="text-align:left">变更审批</td><td style="text-align:left">脚本 + 意图</td><td style="text-align:left">审批单（状态机）</td><td style="text-align:left"><strong>是</strong>（他人批准）</td><td style="text-align:left">无</td></tr>
+<tr><td style="text-align:left">隔离执行</td><td style="text-align:left">审批单 ID</td><td style="text-align:left">stdout / stderr / 退出码</td><td style="text-align:left">已批准才行</td><td style="text-align:left">有（可控范围内）</td></tr>
+<tr><td style="text-align:left">审计追溯</td><td style="text-align:left">时间 / 类型</td><td style="text-align:left">JSONL 记录</td><td style="text-align:left">否（只读）</td><td style="text-align:left">无</td></tr>
+</tbody></table></div>
+<hr>
+<h2 id="二-它刻意不做什么">二、它刻意不做什么</h2>
+<p>技术文档里写清边界，比写清功能更重要。以下都是<strong>设计上的主动选择</strong>，不是没做完：</p>
+<div class="table-wrap"><table><thead><tr><th style="text-align:left">不做</th><th style="text-align:left">原因</th></tr></thead><tbody>
+<tr><td style="text-align:left"><strong>不直接对生产主机执行命令</strong></td><td style="text-align:left">默认 <code>mock</code> 模拟执行。要真跑必须显式切 <code>docker</code>，而且只能跑"别人提交、别人批准、且过了门禁"的那份脚本</td></tr>
+<tr><td style="text-align:left"><strong>不把模型权重下载到本地</strong></td><td style="text-align:left">模型始终通过 API 调用。本项目部署的是<strong>执行环境、工具和数据的自托管</strong>，不是大模型私有化。这两件事在简历和汇报里必须分开说</td></tr>
+<tr><td style="text-align:left"><strong>不替代监控/CMDB/堡垒机</strong></td><td style="text-align:left">它是编排层：取证数据可以来自 Prometheus / Zabbix / 云监控，执行最终应落到堡垒机 + 受限账号。现在用 <code>sandbox/</code> 的确定性模拟数据，是为了结果可复现、可测试</td></tr>
+<tr><td style="text-align:left"><strong>不让模型自由改写整份脚本</strong></td><td style="text-align:left">只接受结构化 patch，前端逐字定位替换。原因是可审查性——diff 里出现无关改动你根本看不出来</td></tr>
+<tr><td style="text-align:left"><strong>不把审批权交给模型</strong></td><td style="text-align:left">审批是人的决策。模型可以生成、可以评估风险，但不能批准自己的产出</td></tr>
+<tr><td style="text-align:left"><strong>不让工具报错终止会话</strong></td><td style="text-align:left">工具失败会被回灌给模型，让它自己换路子。这是真实 Agent 与"一次性的 RPC 调用"的本质区别</td></tr>
+</tbody></table></div>
+<hr>
+<h2 id="三-整体架构与数据流">三、整体架构与数据流</h2>
+<h3 id="3-1-分层">3.1 分层</h3>
+<pre class="code diagram"><code>┌─ 浏览器   原生 HTML/CSS/JS，无构建步骤
+│    故障分析 · 脚本校错 · 工具沙箱 · 自动化运维 · 审计抽屉
+└──────────── HTTP + SSE  ─────────────────────────────────
+┌─ 路由层   routes/api.js
+│    actorOf() 取身份 · requirePermission 声明式守卫 · asyncHandler 包异步
+├─ 编排层   agent/loop.js
+│    按角色过滤工具 · 推理调用回灌多轮 · 达上限后强制收敛
+├─ 能力层
+│    tools.js          9 个只读工具 + 路径白名单 + 结果截断
+│    write-tools.js    4 个写操作工具（执行只收 approval_id）
+│    scriptgen.js      6 个模板，安全骨架 + 默认 dry-run
+│    executor.js       静态门禁 + 三后端执行（mock / docker / local）
+│    approval.js       审批状态机 + 职责分离 + 持久化
+├─ 支撑层
+│    llm/provider.js    双协议 + 兼容性降级重试
+│    llm/mock.js        演示推理引擎（无 Key 跑通全链路）
+│    lib/sse.js         手写 SSE 解析（缓冲 + 分包切帧）
+│    lib/shell-lint.js  20 类 Shell 风险规则
+│    lib/errors.js      结构化错误（code / retryable / hint）
+│    security/rbac.js   角色权限矩阵
+│    audit.js           append-only JSONL（同步写）
+└─ 数据层   sandbox/（5 台模拟主机 · 确定性伪随机，可复现）
+           data/（audit.log · approvals.json）</code></pre>
+<h3 id="3-2-三条主要数据流">3.2 三条主要数据流</h3>
+<p><strong>流 1：SSE 对话（阶段 1/2）</strong></p>
+<pre class="code diagram"><code>浏览器 POST /api/chat
+   → 路由层创建/复用会话，取 actor/role
+   → loop.runAgent()
+       ├─ turn 1: 模型返回 tool_calls
+       ├─ 逐个执行工具 → emit(tool_start) / emit(tool_result)
+       ├─ 结果压成 role=tool 消息入会话
+       ├─ turn 2: 模型基于证据生成报告 → emit(delta) 流式吐字
+       └─ emit(done)
+   → SSE 帧逐条 flush 到浏览器
+   → 前端按 data.type 分发：delta 追加文本 / tool_start 建卡片 / tool_result 更新卡片</code></pre>
+<p><strong>流 2：审批执行（阶段 4）</strong></p>
+<pre class="code"><code>前端提交脚本 → POST /api/approvals
+   → gateScript(script)          ← 门禁，blocked 直接 403，不入库
+   → submitApproval()            ← 写 approvals.json，状态 pending，记审计
+   → 换身份 → POST /api/approvals/:id/decision
+   → decideApproval()            ← 校验 pending + 提交人≠审批人 + 权限，状态 → approved
+   → POST /api/approvals/:id/execute
+   → 重新 gateScript()            ← 二次门禁，防审批后被改
+   → executeScript({mode})       ← mock/docker/local
+   → markExecuted()              ← 状态 → executed，记审计</code></pre>
+<p><strong>流 3：只读工具直连（阶段 3，用于单独验证）</strong></p>
+<pre class="code"><code>前端选工具 + 填参数 → POST /api/tools/invoke
+   → 若工具有 requiredPermission → requirePermission()
+   → runTool(name, args)
+   → 记 tool_call_manual 审计</code></pre>
+<hr>
+<h2 id="四-核心机制拆解">四、核心机制拆解</h2>
+<p>这一节讲"它是怎么做到的"，按重要性排序。</p>
+<h3 id="4-1-Agent-循环-为什么必须多轮">4.1 Agent 循环：为什么必须多轮</h3>
+<p><strong>单轮调用的死穴</strong></p>
+<p>如果只是"把用户问题 + 工具清单发给模型，拿回复"，模型会做一件很危险的事：<strong>编造工具结果</strong>。因为它没有被喂过真实数据，只能靠语言先验猜一个"听起来对"的答案。</p>
+<p>所以必须有第二轮：</p>
+<pre class="code"><code>turn 1  → 模型说"我要调 query_metrics(web-01, disk)"
+        → 系统真的去查，把结果作为 role=tool 消息塞回会话
+turn 2  → 模型现在"看见"了 96% 这个数字，才敢下结论</code></pre>
+<p>这就是 function calling 的本质：<strong>不是让模型执行，而是让模型表达意图，由系统执行，再把事实回灌。</strong></p>
+<p><strong>四个必须处理的工程问题</strong></p>
+<div class="table-wrap"><table><thead><tr><th style="text-align:left">问题</th><th style="text-align:left">不处理的后果</th><th style="text-align:left">本项目的做法</th></tr></thead><tbody>
+<tr><td style="text-align:left">无限循环</td><td style="text-align:left">模型反复取证，费用爆炸，请求挂死</td><td style="text-align:left"><code>AGENT_MAX_TURNS=6</code>（默认）硬上限</td></tr>
+<tr><td style="text-align:left">到上限后沉默</td><td style="text-align:left">用户等了 6 轮拿到空回复</td><td style="text-align:left">第 6 轮强制注入收敛指令 <code>FORCE_CONCLUDE_HINT</code>，且 <code>tools: []</code> 让它只能说话不能调工具</td></tr>
+<tr><td style="text-align:left">单个工具结果太大</td><td style="text-align:left">一次返回 50MB 日志 → 上下文爆掉</td><td style="text-align:left"><code>compactToolResult()</code> 截断到 6000 字符；<code>previewOf()</code> 给前端只留 800 字符 / 最后 5 行</td></tr>
+<tr><td style="text-align:left">客户端断开</td><td style="text-align:left">后台还在烧 token</td><td style="text-align:left"><code>AbortSignal</code> 贯穿每一轮，<code>checkAbort()</code> 在每个循环点检查</td></tr>
+</tbody></table></div>
+<p><strong>权限拒绝也要继续对话</strong></p>
+<p>这是容易被忽略但很关键的一点。当模型调用了当前角色没有权限的工具时，代码不是抛错终止，而是：</p>
+<pre class="code" data-lang="js"><code>toolResult = {
+  ok: false,
+  error: '权限不足：调用工具 approve_change 需要 approval:decide',
+  hint: '当前角色为 viewer，请换用只读工具或联系审批人',
+  code: 'FORBIDDEN',
+};</code></pre>
+<p>然后这条结果照常作为 <code>role=tool</code> 消息回灌。模型会理解"这条路走不通"，改用别的办法，或者直接告诉用户"这需要审批人操作"。</p>
+<p><strong>为什么这比直接报错好</strong>：报错会让整个对话死掉，用户得重新开始；回灌则让 Agent 表现出"知道自己的边界"，体验上像一个懂规矩的同事，而不是一个崩掉的程序。</p>
+<h3 id="4-2-SSE-流式-分包才是真问题">4.2 SSE 流式：分包才是真问题</h3>
+<p>浏览器端用的是 <code>fetch</code> + <code>ReadableStream</code>，因为原生 <code>EventSource</code> 不支持 POST 和自定义请求头。</p>
+<p>手写解析器 <code>server/lib/sse.js</code> 要处理的核心问题是：<strong>TCP 分包边界和 SSE 帧边界不对齐。</strong></p>
+<pre class="code"><code>服务端发出：  "data: {\"type\":\"delta\",\"text\":\"你好\"}\n\n"
+网络实际到达："data: {\"type\":\"del" + "ta\",\"text\":\"你好\"}\n\n"
+                         ↑ 第一包到这里断了</code></pre>
+<p>如果按行读，第一包就是一个不完整的 JSON，<code>JSON.parse</code> 直接炸。正确做法是<strong>缓冲 + 按 <code>\n\n</code> 切分</strong>：</p>
+<pre class="code" data-lang="js"><code>buffer += chunk;
+const frames = buffer.split('\n\n');
+buffer = frames.pop();          // 最后一段可能不完整，留到下一包
+for (const frame of frames) {   // 只处理确定完整的帧
+  // 解析 data: 行
+}</code></pre>
+<p>另外还要 normalize <code>\r\n</code>（Windows 代理会改行尾），以及处理 <code>[DONE]</code> 结束信号。</p>
+<p><strong>服务端踩过的一个坑</strong></p>
+<p>Express 4 + Node 16+ 下，<code>req.on('close')</code> 在<strong>请求体读完</strong>时就触发了，不是客户端断开时。早期用它做取消信号，结果推理在 276ms 就被中止。正确做法是监听 <code>res.on('close')</code>：</p>
+<pre class="code" data-lang="js"><code>res.on('close', () =&gt; { if (!res.writableEnded) controller.abort(); });</code></pre>
+<h3 id="4-3-双协议接入与降级重试">4.3 双协议接入与降级重试</h3>
+<p>同一套上层逻辑，要能跑在两种 OpenAI 协议上：</p>
+<div class="table-wrap"><table><thead><tr><th style="text-align:left">差异点</th><th style="text-align:left">Chat Completions</th><th style="text-align:left">Responses API</th></tr></thead><tbody>
+<tr><td style="text-align:left">工具格式</td><td style="text-align:left"><code>{type:'function', function:{name, description, parameters}}</code></td><td style="text-align:left"><code>{type:'function', name, description, parameters}</code>（扁平）</td></tr>
+<tr><td style="text-align:left">会话状态</td><td style="text-align:left">客户端自管 <code>messages</code> 数组</td><td style="text-align:left">可用 <code>previous_response_id</code> 服务端托管</td></tr>
+<tr><td style="text-align:left">工具结果回灌</td><td style="text-align:left"><code>role: 'tool'</code> 消息</td><td style="text-align:left"><code>function_call_output</code> item</td></tr>
+<tr><td style="text-align:left">系统提示</td><td style="text-align:left"><code>role: 'system'</code></td><td style="text-align:left"><code>instructions</code> 字段</td></tr>
+</tbody></table></div>
+<p><code>provider.js</code> 用 <code>toChatTools()</code> / <code>toResponsesTools()</code> / <code>toResponsesInput()</code> 三个转换函数把差异吃掉，对外统一输出：</p>
+<pre class="code" data-lang="js"><code>{ content, toolCalls: [{id, name, arguments}], finishReason, usage, responseId }</code></pre>
+<p>上层 <code>loop.js</code> 完全不关心底层是哪种协议。</p>
+<p><strong>降级重试（真实世界的必需品）</strong></p>
+<p>很多 OpenAI 兼容中转站不支持 <code>parallel_tool_calls</code>、<code>stream_options</code>、<code>tool_choice</code>、<code>temperature</code>。一上来就 400。</p>
+<p>所以请求分两档构造：</p>
+<pre class="code" data-lang="js"><code>buildBody({ variant: 'full' })     // 带全部能力字段
+buildBody({ variant: 'minimal' })  // 剔除兼容性差的字段</code></pre>
+<p><code>400 / 404 / 422</code> 时自动用 minimal 重试一次。<strong>这一条把"换个中转站就跑不起来"的失败率降了一大截</strong>，是纯工程经验，不是文档里能查到的。</p>
+<h3 id="4-4-会话状态-为什么自己管而不用-previous_response_id">4.4 会话状态：为什么自己管而不用 previous_response_id</h3>
+<p><code>session.js</code> 里同时保留了两种能力，但默认走客户端自管。三条理由：</p>
+<ol><li><strong>可审计</strong>——每轮输入输出都在自己手里，能落盘、能重放、能做敏感信息过滤；托管在服务端你就只剩一个 ID。</li><li><strong>可移植</strong>——换成任何 OpenAI 兼容服务都不受影响。</li><li><strong>可控</strong>——能做历史裁剪，防止上下文越滚越大导致费用失控。</li></ol>
+<p><strong>历史裁剪的坑：tool 消息不能孤立</strong></p>
+<p>直接把前面几条消息砍掉，很容易留下一条孤立的 <code>role: 'tool'</code> 消息。而 API 规定 tool 消息必须紧跟在它对应的 <code>assistant.tool_calls</code> 之后，否则直接报错。</p>
+<p>所以裁剪逻辑是：</p>
+<pre class="code" data-lang="js"><code>let keep = rest.slice(-(max - head.length));
+while (keep.length &amp;&amp; keep[0].role === 'tool') {
+  keep = keep.slice(1);   // 如果切口落在 tool 上，往前多砍一条
+}</code></pre>
+<p>同时保留 system 提示（它不在 messages 里，是每轮拼接的），6 小时 TTL 回收。</p>
+<h3 id="4-5-只读工具层-安全红线写在代码里">4.5 只读工具层：安全红线写在代码里</h3>
+<p>9 个只读工具：</p>
+<div class="table-wrap"><table><thead><tr><th style="text-align:left">工具</th><th style="text-align:left">作用</th><th style="text-align:left">关键约束</th></tr></thead><tbody>
+<tr><td style="text-align:left"><code>list_hosts</code></td><td style="text-align:left">主机清单（角色/IP/环境）</td><td style="text-align:left">可按 env、role 过滤</td></tr>
+<tr><td style="text-align:left"><code>query_metrics</code></td><td style="text-align:left">指标时序（cpu/mem/disk/inode/io_wait/…）</td><td style="text-align:left">采样点数上限 60</td></tr>
+<tr><td style="text-align:left"><code>get_alerts</code></td><td style="text-align:left">未恢复告警</td><td style="text-align:left">可按主机、严重级别过滤</td></tr>
+<tr><td style="text-align:left"><code>query_logs</code></td><td style="text-align:left">日志检索</td><td style="text-align:left">只能读沙箱内样本，source 错时返回可用列表</td></tr>
+<tr><td style="text-align:left"><code>check_services</code></td><td style="text-align:left">服务状态（systemctl status 只读视图）</td><td style="text-align:left">只读</td></tr>
+<tr><td style="text-align:left"><code>top_processes</code></td><td style="text-align:left">进程 TOP N</td><td style="text-align:left">limit 上限 20</td></tr>
+<tr><td style="text-align:left"><code>read_file</code></td><td style="text-align:left">受限读文件</td><td style="text-align:left"><strong>路径白名单</strong>，<code>..</code> 穿越直接拒</td></tr>
+<tr><td style="text-align:left"><code>get_current_time</code></td><td style="text-align:left">服务器时间</td><td style="text-align:left">用于理解告警时间窗</td></tr>
+<tr><td style="text-align:left"><code>list_approvals</code></td><td style="text-align:left">审批单查询</td><td style="text-align:left">需 <code>audit:read</code></td></tr>
+</tbody></table></div>
+<p><strong>三条红线，写死在实现里而不是靠提示词：</strong></p>
+<ol><li>这 9 个工具的实现代码里<strong>不存在任何 <code>exec</code> / <code>spawn</code> / <code>write</code> 调用</strong>。不是"提示模型别执行"，是根本没有这个代码路径。</li><li>文件读取走 <code>allowedReadRoots</code> 白名单：</li></ol>
+<pre class="code" data-lang="js"><code>const resolved = path.resolve(root, rel);
+if (!resolved.startsWith(root + path.sep)) throw new ToolError('路径越界');</code></pre>
+<p>   用 <code>path.resolve</code> 之后再比前缀，而不是检查字符串里有没有 <code>..</code>——后者能被各种编码绕过。</p>
+<ol><li>参数做字符集白名单校验：<code>/^[\w.\-/:* ]{0,128}$/</code>。这是防注入的第二道。</li></ol>
+<p><strong>工具报错不回灌"异常"，而回灌"可用的选项"</strong></p>
+<p>比如 <code>query_logs(web-01, source='wrong')</code>，返回的不是 <code>Error: ENOENT</code>，而是：</p>
+<pre class="code" data-lang="js"><code>{ ok: false, error: 'source 不存在：wrong', hint: 'web-01 可用 source：nginx, syslog, app' }</code></pre>
+<p>模型看到可用列表，下一轮自己就能改对。这就是"能让 Agent 自我纠正的错误信息"和"只给程序员看的堆栈"的区别。</p>
+<h3 id="4-6-脚本生成-模板化而不是让模型自由发挥">4.6 脚本生成：模板化而不是让模型自由发挥</h3>
+<p><code>scriptgen.js</code> 用 6 个模板匹配意图：</p>
+<div class="table-wrap"><table><thead><tr><th style="text-align:left">模板</th><th style="text-align:left">匹配关键词</th><th style="text-align:left">用途</th></tr></thead><tbody>
+<tr><td style="text-align:left"><code>diagnose-collect</code></td><td style="text-align:left">采集 / 诊断 / 排查 / 信息收集</td><td style="text-align:left">一次性收集现场信息打包</td></tr>
+<tr><td style="text-align:left"><code>log-cleanup</code></td><td style="text-align:left">清理 / 日志 / 删除 / 磁盘 / 空间</td><td style="text-align:left">按天清理过期日志</td></tr>
+<tr><td style="text-align:left"><code>service-restart</code></td><td style="text-align:left">重启 / restart / 服务 / systemd</td><td style="text-align:left">安全重启服务</td></tr>
+<tr><td style="text-align:left"><code>disk-usage-report</code></td><td style="text-align:left">磁盘 / 占用 / 目录 / du</td><td style="text-align:left">目录占用排行</td></tr>
+<tr><td style="text-align:left"><code>config-backup</code></td><td style="text-align:left">备份 / backup / 配置 / 快照</td><td style="text-align:left">配置打时间戳快照</td></tr>
+<tr><td style="text-align:left"><code>health-check</code></td><td style="text-align:left">巡检 / 检查 / health / 状态</td><td style="text-align:left">常规巡检五项</td></tr>
+</tbody></table></div>
+<p><strong>为什么用模板而不是直接让 LLM 生成脚本？</strong></p>
+<p>因为<strong>"默认安全"必须由结构保证，不能靠模型每次都想起来</strong>。模板产出的骨架固定包含：</p>
+<ul><li><code>set -euo pipefail</code></li><li><code>trap ... EXIT</code>（命令失败 / Ctrl-C 都会有兜底）</li><li><code>APPLY="${APPLY:-0}"</code> + <code>--apply</code> 开关（默认 dry-run）</li></ul>
+<p>如果让模型每次自由生成，你无法保证这三点每次都出现。模板化等于把安全基线<strong>编译进了产物</strong>。</p>
+<p>模型仍然有用：意图识别、参数填充、异常场景补充。但骨架不交给它。</p>
+<h3 id="4-7-静态门禁-两层判定-注释剥离">4.7 静态门禁：两层判定 + 注释剥离</h3>
+<p><code>gateScript()</code> 返回 <code>blocked</code> / <code>needs_approval</code> / <code>auto_allowed</code> 三种结论。</p>
+<p>判定顺序：</p>
+<pre class="code"><code>1. 剥离注释 → 匹配高危模式（14 条 blocked）
+2. lint 中 severity=critical 的项 → 也计入 blocked
+3. 若有 blocked → 立即返回，不可放行
+4. lint 中 severity=high 的项 → 计入 needs_approval
+5. 兜底策略：任何执行都要人点头（哪怕全只读）</code></pre>
+<p><strong>为什么必须剥离注释</strong></p>
+<p>这是踩过的真实坑。<code>log-cleanup</code> 模板的注释里写了一句：</p>
+<pre class="code" data-lang="bash"><code># 用 find -delete 而不是 rm -rf，避免误删</code></pre>
+<p>结果脚本被自己的注释判成 <code>blocked</code>，永远提交不进去。</p>
+<p>修法是 <code>stripComments()</code>，而且是<strong>引号感知</strong>的——<code>echo "# 不是注释"</code> 里的 <code>#</code> 不能被当注释切掉：</p>
+<pre class="code" data-lang="js"><code>if (c === '#' &amp;&amp; !inSingle &amp;&amp; !inDouble &amp;&amp; (i === 0 || /\s/.test(line[i - 1]))) {
+  return line.slice(0, i);
+}</code></pre>
+<p><strong>门禁和 lint 是两件事，不能混用</strong></p>
+<div class="table-wrap"><table><thead><tr><th style="text-align:left"></th><th style="text-align:left">shell-lint</th><th style="text-align:left">gate</th></tr></thead><tbody>
+<tr><td style="text-align:left">目的</td><td style="text-align:left">提示风险，帮人改好</td><td style="text-align:left">决定能不能执行</td></tr>
+<tr><td style="text-align:left">结论</td><td style="text-align:left">分级建议（critical/high/medium/low）</td><td style="text-align:left">放行 / 需审批 / 拒绝</td></tr>
+<tr><td style="text-align:left">被谁用</td><td style="text-align:left">阶段 2 的 diff 修复</td><td style="text-align:left">阶段 4 的提交与执行</td></tr>
+</tbody></table></div>
+<p>如果用一个"给建议"的模块去当"做决定"的闸门，就会出现"警告了一堆但还是放行了"的情况。</p>
+<blockquote><p>顺带说一个本项目的真实修复：自动化视图的「静态门禁体检」按钮，早期误调了 <code>/api/script/lint</code>（阶段二的体检接口），导致对 <code>rm -rf /data/app</code> 显示"需人工审批"，而真实提交时门禁判的是 <code>blocked</code>——<strong>体检说能过、提交却被拒</strong>。修法是新增 <code>POST /api/script/gate</code>，与提交共用同一个 <code>gateScript()</code>，从接口层面保证结论一致。</p></blockquote>
+<h3 id="4-8-审批状态机-职责分离-二次门禁">4.8 审批状态机：职责分离 + 二次门禁</h3>
+<pre class="code diagram"><code>draft ──提交──&gt; pending ──批准──&gt; approved ──执行──&gt; executed
+                   │
+                   └──驳回──&gt; rejected
+
+任何环节命中 blocked ──&gt; denied（拒绝入库，从未进入审批）</code></pre>
+<p>三条硬规则写死在 <code>approval.js</code> 里：</p>
+<p><strong>规则 1：高危脚本不得入库</strong></p>
+<p><code>gate.level === 'blocked'</code> 时直接 403，返回 <code>GATE_BLOCKED</code> + 具体原因。<strong>审批也救不回来</strong>——不存在"批一下就能过"的路径。</p>
+<p><strong>规则 2：提交人不能批准自己</strong></p>
+<pre class="code" data-lang="js"><code>if (!ALLOW_SELF_APPROVAL &amp;&amp; by &amp;&amp; item.submitted_by === by) {
+  throw Errors.forbidden('不能批准自己提交的变更');
+}</code></pre>
+<p>这是变更管理的核心要求（职责分离，Separation of Duties）。如果一个人能提出又能批准，审批就是形式主义。演示时用 <code>ALLOW_SELF_APPROVAL=1</code> 可以放开，但默认关闭。</p>
+<p><strong>规则 3：执行前二次门禁</strong></p>
+<pre class="code" data-lang="js"><code>// executeApproved 内部
+if (item.status !== STATUS.APPROVED) throw Errors.badRequest(...);
+const gate = gateScript(item.script);       // 重新跑
+if (gate.level === 'blocked') throw ...;</code></pre>
+<p>防的是 TOCTOU（Time-of-Check to Time-of-Use）：审批之后到执行之前，脚本可能被改过。</p>
+<p><strong>状态机是显式的</strong></p>
+<p>每次流转都校验前置状态。<code>pending</code> 之外的审批单不能再被决策，<code>approved</code> 之外不能执行。没有"状态随便写"的余地——这是并发和误操作的第一道防线。</p>
+<h3 id="4-9-隔离执行-用-接口形状-防绕过">4.9 隔离执行：用"接口形状"防绕过</h3>
+<p>这是整个项目最需要克制的部分。</p>
+<p><strong>核心设计：<code>execute_approved</code> 只接受 <code>approval_id</code>，不接受脚本文本。</strong></p>
+<pre class="code" data-lang="js"><code>// write-tools.js
+{
+  name: 'execute_approved',
+  parameters: {
+    type: 'object',
+    properties: {
+      approval_id: { type: 'string', description: '审批单 ID' },
+      mode: { type: 'string', description: 'mock / docker / local' },
+    },
+    required: ['approval_id'],   // 注意：没有 script 这个字段
+  },
+}</code></pre>
+<p><strong>为什么这比"检查权限"更可靠？</strong></p>
+<p>假设接口接受脚本，那么任何拥有 <code>exec:sandbox</code> 权限的人（或模型）都可以直接传一段 <code>rm -rf /</code>，然后再加个"必须有 approval_id"的参数校验——但校验逻辑可能被异常路径绕过、可能被未来某次修改漏掉。</p>
+<p>而<strong>接口根本不收脚本</strong>，执行路径上就不存在"传入任意脚本直接执行"的分支。这是用类型系统/接口契约代替运行时检查，可靠性高一个量级。</p>
+<p>同理，执行前会重新从存储里读出 <code>item.script</code>——<strong>永远执行存储里那份，不执行调用方传来的那份</strong>。</p>
+<p><strong>三种后端</strong></p>
+<div class="table-wrap"><table><thead><tr><th style="text-align:left">模式</th><th style="text-align:left">实现</th><th style="text-align:left">副作用</th><th style="text-align:left">用途</th></tr></thead><tbody>
+<tr><td style="text-align:left"><code>mock</code>（默认）</td><td style="text-align:left">逐行模拟，只读命令与 shell 内建回显，其余标"隔离环境拦截"</td><td style="text-align:left">无</td><td style="text-align:left">演示、CI、默认</td></tr>
+<tr><td style="text-align:left"><code>docker</code></td><td style="text-align:left"><code>--rm --network=none --memory=256m --cpus=0.5 --pids-limit=64</code> + 只读挂载</td><td style="text-align:left">有（容器内）</td><td style="text-align:left">真跑脚本</td></tr>
+<tr><td style="text-align:left"><code>local</code></td><td style="text-align:left">受限解释器，只认 <code>READ_ONLY_COMMANDS</code> 白名单 + <code>SAFE_BUILTINS</code>，<strong>永不调用系统 shell</strong></td><td style="text-align:left">极小</td><td style="text-align:left">无 Docker 环境</td></tr>
+</tbody></table></div>
+<p><code>local</code> 模式需要显式 <code>EXEC_ALLOW_LOCAL=true</code> 才启用，因为"在本机执行"这个语义本身就该多一道确认。</p>
+<p><strong>为什么 <code>local</code> 不调 <code>child_process.exec</code>？</strong></p>
+<p>因为 <code>exec</code> 会起 shell，而 shell 有重定向、管道、命令替换、变量展开……每一样都是注入面。受限解释器是逐行 <code>spawn</code> 白名单命令，参数按数组传，不经过 shell 解析。<strong>这样在 Windows / Linux / macOS 上行为一致，也不存在 shell 注入。</strong></p>
+<h3 id="4-10-RBAC-声明式授权-双层校验">4.10 RBAC：声明式授权 + 双层校验</h3>
+<p>8 个权限，4 个角色（<code>viewer</code> ⊂ <code>operator</code> ⊂ <code>approver</code>）：</p>
+<pre class="code" data-lang="js"><code>const VIEWER   = ['chat:read', 'tool:invoke', 'script:lint', 'audit:read'];
+const OPERATOR = [...VIEWER, 'script:generate', 'approval:submit'];
+const APPROVER = [...OPERATOR, 'approval:decide', 'exec:sandbox'];</code></pre>
+<p><strong>关键点 1：权限声明在工具定义上，不散落在 handler 里</strong></p>
+<pre class="code" data-lang="js"><code>{
+  name: 'approve_change',
+  requiredPermission: 'approval:decide',
+  // ...
+}</code></pre>
+<p>好处是：<code>loop.js</code> 可以在<strong>给模型工具列表之前</strong>就按角色过滤掉无权工具。模型甚至不知道有这些工具存在，从源头减少无意义的调用。</p>
+<p><strong>关键点 2：Agent 内和 HTTP 层用同一套规则</strong></p>
+<pre class="code" data-lang="js"><code>// loop.js —— 模型调用时
+if (def?.requiredPermission) assertCan(role, def.requiredPermission, ...);
+
+// api.js —— 手动直连时
+requirePermission(req, def.requiredPermission, `调用工具 ${name}`);</code></pre>
+<p>两处都走 <code>assertCan</code>。这样不会出现"Agent 路径拦了、手动接口没拦"的漏洞。</p>
+<p><strong>关键点 3：未知角色降级为 viewer</strong></p>
+<pre class="code" data-lang="js"><code>return Object.prototype.hasOwnProperty.call(ROLES, r) ? r : 'viewer';</code></pre>
+<p>最小权限原则。传 <code>x-ops-role: superadmin</code> 不会变成管理员，而是变成一个什么都不能改的观察员。</p>
+<h3 id="4-11-审计-同步写入才能-返回即留痕">4.11 审计：同步写入才能"返回即留痕"</h3>
+<p>早期版本用异步 <code>appendFile</code> + 写入队列，测试里出现了一个诡异现象：调用返回后立刻读审计文件，读不到刚写的记录。</p>
+<p>原因是 async 写入还没 flush。修法是改成 <strong><code>appendFileSync</code></strong>：</p>
+<pre class="code" data-lang="js"><code>fs.appendFileSync(AUDIT_FILE, JSON.stringify(entry) + '\n', 'utf8');</code></pre>
+<p><strong>为什么接受同步写带来的性能损失？</strong></p>
+<p>因为审计的语义是"调用返回时记录必须已经存在"。异步写会让"接口返回成功"和"审计已落盘"之间出现一个窗口，而这个窗口正是事故调查时最尴尬的地方——你无法证明发生了什么。</p>
+<p>在低 QPS 的运维场景下，一次几毫秒的同步写完全可以接受。如果真到了高并发，正确做法是本地顺序写 + 异步批量投递到集中日志系统，而不是"先返回再写"。</p>
+<h3 id="4-12-结构化错误-让前端能决定-要不要给重试按钮">4.12 结构化错误：让前端能决定"要不要给重试按钮"</h3>
+<p>统一的 <code>AppError</code>：</p>
+<pre class="code" data-lang="js"><code>{ code: 'TOOL_TIMEOUT', httpStatus: 504, retryable: true, hint: '该工具响应超时，可稍后重试或缩小查询范围' }</code></pre>
+<p>HTTP 响应统一为 <code>{error, code, retryable, hint}</code>。</p>
+<p><strong>为什么要 <code>retryable</code> 这个字段？</strong></p>
+<p>因为不同错误该有不同的 UI 处理：</p>
+<ul><li>参数错（400）→ 重试没用，应该高亮表单</li><li>权限不足（403）→ 重试没用，应该提示换身份</li><li>门禁拒绝（403 <code>GATE_BLOCKED</code>）→ 重试没用，应该展示具体原因让人改脚本</li><li>模型不可用（502）→ 可以重试</li><li>工具超时（504）→ 可以重试，但建议缩小范围</li></ul>
+<p>如果所有错误都只给一个字符串，前端只能一律弹 toast，用户不知道下一步该干什么。</p>
+<h3 id="4-13-演示模式-不是假输出-是同一套链路的另一个推理后端">4.13 演示模式：不是假输出，是同一套链路的另一个推理后端</h3>
+<p>没有 API Key 时，<code>mock.js</code> 接管"推理"。它不是返回固定文本，而是<strong>按真实模型的交互协议工作</strong>：</p>
+<pre class="code"><code>第 1 轮：识别意图 → 返回 tool_calls（真的去执行）
+第 2 轮：读取真实的工具返回 → 按证据拼装六段式报告 → 流式输出</code></pre>
+<p>所以 SSE 流式、多轮编排、工具回灌、Markdown 渲染、审计留痕——<strong>整条链路都是真的</strong>，只有"推理"这一步由规则引擎代替。</p>
+<p>内置 5 个故障场景，每个都有完整的证据链设计：</p>
+<div class="table-wrap"><table><thead><tr><th style="text-align:left">场景</th><th style="text-align:left">核心证据</th><th style="text-align:left">想教的东西</th></tr></thead><tbody>
+<tr><td style="text-align:left">磁盘写满</td><td style="text-align:left">disk 96% + inode 98% + <code>No space left on device</code></td><td style="text-align:left">别只看 disk，inode 也会满</td></tr>
+<tr><td style="text-align:left">Java OOM</td><td style="text-align:left">堆内存曲线 + <code>OutOfMemoryError</code> + 重启次数 5</td><td style="text-align:left">OOM Killer 会反复杀，症状是"服务自己重启"</td></tr>
+<tr><td style="text-align:left">慢查询暴涨</td><td style="text-align:left"><code>slow_query</code> + <code>Lock_time</code> 4.99s + iowait 41.7%</td><td style="text-align:left">慢查询背后可能是锁等待 + IO 瓶颈叠加</td></tr>
+<tr><td style="text-align:left">Redis 下线</td><td style="text-align:left">日志 <code>User requested shutdown</code> + Sentinel 无法切换</td><td style="text-align:left">主节点被主动关，从节点不可用 → 切换失败</td></tr>
+<tr><td style="text-align:left">网关 502</td><td style="text-align:left">gw-05 upstream timeout 187/min，但 app-02 同期在 OOM 重启</td><td style="text-align:left"><strong>网关是受害者，只查网关找不到根因</strong></td></tr>
+</tbody></table></div>
+<p>最后一个场景最能体现价值：它故意构造了"症状在主机上、根因在别处"的陷阱。如果 Agent 只看网关的指标就下结论，答案是错的。</p>
+<p><strong>为什么模拟数据要用种子化伪随机生成？</strong></p>
+<p><code>gen-fixtures.mjs</code> 用固定种子生成，保证每次查询结果一致。否则模型会看到"上一轮磁盘 96%、这一轮 93%"，然后开始胡乱归因——<strong>证据不稳定会导致推理不稳定</strong>。</p>
+<hr>
+<h2 id="五-关键设计决策与取舍">五、关键设计决策与取舍</h2>
+<p>这一节是文档里最"值钱"的部分：为什么这么做，不这么做会怎样。</p>
+<h3 id="决策-1-执行接口只收-approval_id-不收脚本">决策 1：执行接口只收 <code>approval_id</code>，不收脚本</h3>
+<div class="table-wrap"><table><thead><tr><th style="text-align:left"></th><th style="text-align:left"></th></tr></thead><tbody>
+<tr><td style="text-align:left"><strong>选择</strong></td><td style="text-align:left"><code>execute_approved({approval_id})</code>，接口里没有 <code>script</code> 字段</td></tr>
+<tr><td style="text-align:left"><strong>替代方案</strong></td><td style="text-align:left"><code>execute_script({script, approval_id})</code>，靠"必须带有效 approval_id"来校验</td></tr>
+<tr><td style="text-align:left"><strong>为什么选这个</strong></td><td style="text-align:left">前者让"传任意脚本执行"在<strong>类型层面就不可能</strong>；后者依赖运行时检查，而检查逻辑可能被异常路径绕过、被未来修改漏掉</td></tr>
+<tr><td style="text-align:left"><strong>代价</strong></td><td style="text-align:left">想临时跑个脚本必须先走提交流程，灵活性降低</td></tr>
+<tr><td style="text-align:left"><strong>结论</strong></td><td style="text-align:left">在"执行生产变更"这个场景里，安全性优先于灵活性。要灵活可以加沙箱调试功能，但不该和执行审批流共用入口</td></tr>
+</tbody></table></div>
+<h3 id="决策-2-门禁-blocked-不可通过审批放行">决策 2：门禁 <code>blocked</code> 不可通过审批放行</h3>
+<div class="table-wrap"><table><thead><tr><th style="text-align:left"></th><th style="text-align:left"></th></tr></thead><tbody>
+<tr><td style="text-align:left"><strong>选择</strong></td><td style="text-align:left">命中 14 条高危模式，直接拒绝且没有 override</td></tr>
+<tr><td style="text-align:left"><strong>替代方案</strong></td><td style="text-align:left">高危也能提交，但要求双人审批 + 强提示</td></tr>
+<tr><td style="text-align:left"><strong>为什么选这个</strong></td><td style="text-align:left"><code>rm -rf /</code>、<code>mkfs</code>、<code>DROP TABLE</code> 这类操作的期望收益几乎为零，而误操作的代价是灾难性的。给它们留 override 通道，等于把"人为失误"变成"系统性风险"</td></tr>
+<tr><td style="text-align:left"><strong>代价</strong></td><td style="text-align:left">真实场景里偶尔确实需要删库，此时只能绕开系统手工操作（但那样也就没有审计了）</td></tr>
+<tr><td style="text-align:left"><strong>更好的做法</strong></td><td style="text-align:left">高危操作走独立的、更重的变更流程（比如 DBA 双人复核 + 备份验证），而不是在通用工具里开个口子</td></tr>
+</tbody></table></div>
+<h3 id="决策-3-脚本用模板生成-而不是让-LLM-自由写">决策 3：脚本用模板生成，而不是让 LLM 自由写</h3>
+<div class="table-wrap"><table><thead><tr><th style="text-align:left"></th><th style="text-align:left"></th></tr></thead><tbody>
+<tr><td style="text-align:left"><strong>选择</strong></td><td style="text-align:left">6 个模板 + 参数填充，骨架固定</td></tr>
+<tr><td style="text-align:left"><strong>替代方案</strong></td><td style="text-align:left">直接把意图给 LLM，让它写完整脚本</td></tr>
+<tr><td style="text-align:left"><strong>为什么选这个</strong></td><td style="text-align:left"><code>set -euo pipefail</code> / <code>trap</code> / 默认 dry-run 这三条安全基线，靠"每次祈祷模型记得"是不可靠的。写进模板等于编译进产物</td></tr>
+<tr><td style="text-align:left"><strong>代价</strong></td><td style="text-align:left">覆盖不到模板之外的场景，需要人工补充</td></tr>
+<tr><td style="text-align:left"><strong>怎么补救</strong></td><td style="text-align:left">允许用户在编辑器里改；改完仍然过门禁；门禁会指出新引入的风险</td></tr>
+</tbody></table></div>
+<h3 id="决策-4-注释剥离后才做风险匹配">决策 4：注释剥离后才做风险匹配</h3>
+<div class="table-wrap"><table><thead><tr><th style="text-align:left"></th><th style="text-align:left"></th></tr></thead><tbody>
+<tr><td style="text-align:left"><strong>选择</strong></td><td style="text-align:left"><code>stripComments()</code> 引号感知剥离，再跑正则</td></tr>
+<tr><td style="text-align:left"><strong>替代方案</strong></td><td style="text-align:left">直接对全文匹配</td></tr>
+<tr><td style="text-align:left"><strong>为什么选这个</strong></td><td style="text-align:left">注释里写"不要用 rm -rf"会导致脚本被自己判死。这种误报在真实系统里极其常见，而误报的后果是<strong>用户开始不信任门禁，进而找办法绕过</strong>——这比漏报更危险</td></tr>
+<tr><td style="text-align:left"><strong>代价</strong></td><td style="text-align:left">理论上存在"把危险命令藏在注释里"的绕过，但注释本身不执行，所以不构成实际风险</td></tr>
+</tbody></table></div>
+<h3 id="决策-5-自己管会话历史-不用-previous_response_id">决策 5：自己管会话历史，不用 <code>previous_response_id</code></h3>
+<div class="table-wrap"><table><thead><tr><th style="text-align:left"></th><th style="text-align:left"></th></tr></thead><tbody>
+<tr><td style="text-align:left"><strong>选择</strong></td><td style="text-align:left">客户端维护 <code>messages</code>，<code>responseId</code> 只作为可选透传</td></tr>
+<tr><td style="text-align:left"><strong>替代方案</strong></td><td style="text-align:left">全部交给 Responses API 服务端托管</td></tr>
+<tr><td style="text-align:left"><strong>为什么选这个</strong></td><td style="text-align:left">可审计（能落盘重放）、可移植（换服务商不影响）、可控（能裁剪防费用失控）</td></tr>
+<tr><td style="text-align:left"><strong>代价</strong></td><td style="text-align:left">要多写裁剪逻辑，且要处理 tool 消息不能孤立的约束</td></tr>
+<tr><td style="text-align:left"><strong>什么时候该反过来选</strong></td><td style="text-align:left">如果只是做 Demo 或对成本不敏感，服务端托管更省事。生产系统里"审计"这个需求通常会把天平压向自管</td></tr>
+</tbody></table></div>
+<h3 id="决策-6-审计同步写">决策 6：审计同步写</h3>
+<div class="table-wrap"><table><thead><tr><th style="text-align:left"></th><th style="text-align:left"></th></tr></thead><tbody>
+<tr><td style="text-align:left"><strong>选择</strong></td><td style="text-align:left"><code>appendFileSync</code></td></tr>
+<tr><td style="text-align:left"><strong>替代方案</strong></td><td style="text-align:left">异步队列批量落盘（性能更好）</td></tr>
+<tr><td style="text-align:left"><strong>为什么选这个</strong></td><td style="text-align:left">审计的语义是"接口返回时记录已在"；异步写会留下一个窗口，而窗口期正是事故调查最需要证据的地方</td></tr>
+<tr><td style="text-align:left"><strong>代价</strong></td><td style="text-align:left">每次调用多几毫秒 IO</td></tr>
+<tr><td style="text-align:left"><strong>生产化方向</strong></td><td style="text-align:left">本地顺序写（保证返回即落盘）+ 异步投递到集中日志（ELK / Loki），两者不矛盾</td></tr>
+</tbody></table></div>
+<h3 id="决策-7-前端置灰-服务端硬校验-两层都要">决策 7：前端置灰 + 服务端硬校验，两层都要</h3>
+<div class="table-wrap"><table><thead><tr><th style="text-align:left"></th><th style="text-align:left"></th></tr></thead><tbody>
+<tr><td style="text-align:left"><strong>选择</strong></td><td style="text-align:left">前端按权限禁用按钮，服务端 <code>requirePermission</code> / <code>assertCan</code> 再校验一次</td></tr>
+<tr><td style="text-align:left"><strong>替代方案</strong></td><td style="text-align:left">只做前端隐藏（少写代码）</td></tr>
+<tr><td style="text-align:left"><strong>为什么选这个</strong></td><td style="text-align:left">前端隐藏只是体验优化；任何人打开 devtools 改一下 <code>disabled</code> 属性就能点。<strong>真正的安全边界只能在服务端</strong></td></tr>
+<tr><td style="text-align:left"><strong>代价</strong></td><td style="text-align:left">两处逻辑要保持同步（用"工具定义上声明权限"来收敛，避免发散）</td></tr>
+</tbody></table></div>
+<hr>
+<h2 id="六-一次完整请求的生命周期">六、一次完整请求的生命周期</h2>
+<p>以"提交一个变更并执行"为例，把路径串起来：</p>
+<pre class="code"><code>[浏览器]
+  用户在自动化视图填入意图，点「生成草稿」
+  ↓ POST /api/script/generate  { intent, target_host }
+[路由层]
+  requirePermission(req, 'script:generate')   ← operator 及以上才过
+  ↓
+[scriptgen]
+  pickTemplate(intent) → 'log-cleanup'
+  generateScript() → 52 行带骨架脚本
+  gateScript() → { level: 'needs_approval', reasons: [...], counts: {...} }
+  ↓ 返回 { script, gate, template }
+[浏览器]
+  渲染脚本到编辑器，门禁结论显示"需人工审批"
+  用户点「提交审批」
+  ↓ POST /api/approvals  { script, intent, target_host }
+[路由层]
+  requirePermission(req, 'approval:submit')
+  gateScript(script)                    ← 第一道门禁
+  blocked? → 403 GATE_BLOCKED（不入库）
+  ↓
+[approval]
+  submitApproval() → id: AP-20261016-xxxx, status: pending
+  写 data/approvals.json
+  record({ type: 'approval_submit', actor, role, ... })
+  ↓ 返回 { id, status: 'pending' }
+
+
+[浏览器] 换个身份（release-manager@demo, approver）
+  ↓ POST /api/approvals/AP-xxx/decision  { decision: 'approve' }
+[路由层]
+  requirePermission(req, 'approval:decide')
+  ↓
+[approval]
+  decideApproval():
+    - 状态必须是 pending
+    - submitted_by (duty-lead@demo) ≠ by (release-manager@demo)   ← 职责分离
+    - 有 approval:decide 权限
+  → status: approved, decided_by, decided_at
+  record({ type: 'approval_decision', decision: 'approve' })
+
+
+[浏览器]
+  ↓ POST /api/approvals/AP-xxx/execute  { mode: 'mock' }
+[路由层]
+  requirePermission(req, 'exec:sandbox')
+  ↓
+[executor]
+  - 读存储里的 item.script（不读调用方传的）
+  - 校验 status === 'approved'
+  - gateScript(item.script) 重新跑一遍           ← 第二道门禁（防 TOCTOU）
+  - blocked? → 拒绝
+  - executeScript({ mode: 'mock' }) → 逐行模拟
+  ↓
+[approval]
+  markExecuted() → status: executed, execution: { exitCode, stdout, durationMs, simulated }
+  record({ type: 'exec_finished', actor, role, ok, ms })
+  ↓ 返回执行结果
+[浏览器]
+  展示 stdout / stderr / 退出码，标注「模拟执行」</code></pre>
+<p><strong>四道卡口，任何一道失败都会中断，且每一道都记审计</strong>：</p>
+<pre class="code"><code>权限 → 门禁 → 职责分离 → 二次门禁 + 状态校验</code></pre>
+<hr>
+<h2 id="七-测试策略">七、测试策略</h2>
+<p>三层，各有侧重，全部零外部依赖（不需要真模型、不需要真 Docker）。</p>
+<h3 id="7-1-后端冒烟-74-项断言-npm-test">7.1 后端冒烟：74 项断言（<code>npm test</code>）</h3>
+<p>自带服务启动与回收，端口 8788（避免和 dev 冲突）。覆盖：</p>
+<div class="table-wrap"><table><thead><tr><th style="text-align:left">分组</th><th style="text-align:left">验证内容</th></tr></thead><tbody>
+<tr><td style="text-align:left">基础可用性</td><td style="text-align:left">健康检查、配置下发、工具清单</td></tr>
+<tr><td style="text-align:left">只读工具与安全护栏</td><td style="text-align:left">正常取证、<strong>路径穿越必须被拒</strong>、参数越界拒绝</td></tr>
+<tr><td style="text-align:left">故障分析（多轮取证）</td><td style="text-align:left">SSE 事件序列完整、工具卡片、报告含证据链</td></tr>
+<tr><td style="text-align:left">会话状态</td><td style="text-align:left">多轮上下文、tool 消息不孤立</td></tr>
+<tr><td style="text-align:left">脚本校错</td><td style="text-align:left">20 类规则命中、diff 生成、patch 应用</td></tr>
+<tr><td style="text-align:left">脚本生成与审批执行</td><td style="text-align:left">模板命中、骨架存在、<strong>门禁拒绝高危</strong>、<strong>门禁体检与提交判定一致</strong>、提交、<strong>自己不能自批</strong>、越权拒绝、批准、执行、状态流转</td></tr>
+<tr><td style="text-align:left">审计留痕</td><td style="text-align:left">六类事件都有记录</td></tr>
+<tr><td style="text-align:left">参数校验与错误</td><td style="text-align:left">400 / 404 / 结构化错误体</td></tr>
+</tbody></table></div>
+<h3 id="7-2-执行器单测-test-unit-exec-mjs">7.2 执行器单测（<code>test/unit-exec.mjs</code>）</h3>
+<p>免起服务，直接测 <code>gateScript()</code> 和 <code>executeScript()</code>：</p>
+<pre class="code"><code>只读脚本        → needs_approval（仍需审批）
+rm -rf 变量     → blocked（多重原因叠加）
+curl | bash    → blocked（两个模式都命中）
+rm -rf 绝对路径 → blocked
+DROP TABLE     → blocked</code></pre>
+<p>以及模拟执行的真实输出、高危拦截返回 <code>denied: true</code>。</p>
+<p><strong>为什么单独拆出来</strong>：门禁是最核心的安全逻辑，需要有"改一行就能跑"的快速回归。</p>
+<h3 id="7-3-浏览器-UI-测试-41-项-test-browser-check-mjs">7.3 浏览器 UI 测试：41 项（<code>test/browser-check.mjs</code>）</h3>
+<p>用 <code>playwright-core</code> 驱动真实浏览器，走完整用户路径：</p>
+<ul><li>首屏渲染（含<strong>写操作工具不能被误标为只读</strong>）</li><li>阶段 1：点击场景 → SSE 流式渲染 → 工具卡片 → Markdown 结构</li><li>阶段 2：载入示例 → 体检 → diff → 确认应用</li><li>阶段 3：工具下拉分组 → 调用 → 路径穿越在 UI 层也被拒</li><li>阶段 4：生成 → 门禁结论 → 提交 → 队列 → <strong>自批按钮禁用</strong> → 换人批准 → 执行 → stdout 面板</li><li>阶段 5：切 observer 后生成按钮禁用、切回恢复</li><li><strong>控制台无 JS 运行时错误</strong></li></ul>
+<p>最后一条特别重要：很多前端 bug 不体现在断言里，只体现在 console 的红色报错里。</p>
+<h3 id="7-4-测试里发现的真实问题-举三个">7.4 测试里发现的真实问题（举三个）</h3>
+<div class="table-wrap"><table><thead><tr><th style="text-align:left">问题</th><th style="text-align:left">根因</th><th style="text-align:left">修法</th></tr></thead><tbody>
+<tr><td style="text-align:left">审批后立即读审计读不到</td><td style="text-align:left"><code>appendFile</code> 异步未 flush</td><td style="text-align:left">改 <code>appendFileSync</code></td></tr>
+<tr><td style="text-align:left">测试请求返回 HTML 导致 <code>JSON.parse</code> 报 <code>Unexpected token '&lt;'</code></td><td style="text-align:left">三个 URL 少了 <code>/api</code> 前缀，落到 SPA fallback</td><td style="text-align:left">补全路径</td></tr>
+<tr><td style="text-align:left">门禁体检说"需审批"，提交却被拒</td><td style="text-align:left">UI 调了阶段二的 lint 接口而非门禁</td><td style="text-align:left">新增 <code>/api/script/gate</code>，与提交共用 <code>gateScript()</code></td></tr>
+</tbody></table></div>
+<hr>
+<h2 id="八-已知边界与生产化差距">八、已知边界与生产化差距</h2>
+<p>诚实地列出"这个 Demo 到生产还差什么"，比宣称"已完成"更专业。</p>
+<div class="table-wrap"><table><thead><tr><th style="text-align:left">差距</th><th style="text-align:left">现状</th><th style="text-align:left">生产化建议</th></tr></thead><tbody>
+<tr><td style="text-align:left"><strong>身份认证</strong></td><td style="text-align:left">用 <code>x-ops-role</code> / <code>x-ops-actor</code> 请求头，<strong>可伪造</strong></td><td style="text-align:left">换 SSO / OIDC / 堡垒机下发的真实身份；服务端签发会话，绝不信任客户端自称角色</td></tr>
+<tr><td style="text-align:left"><strong>执行目标</strong></td><td style="text-align:left"><code>mock</code> 模拟 / <code>docker</code> 本地容器</td><td style="text-align:left">接堡垒机 + 受限账号（sudo 白名单），或 K8s Job；执行前后打快照</td></tr>
+<tr><td style="text-align:left"><strong>审批持久化</strong></td><td style="text-align:left"><code>data/approvals.json</code> 单文件</td><td style="text-align:left">换数据库，加行级锁、版本号（乐观锁）、不可篡改存储（WORM）</td></tr>
+<tr><td style="text-align:left"><strong>审计存储</strong></td><td style="text-align:left">本地 append-only JSONL</td><td style="text-align:left">按日切割 + 异地备份 + 投递到集中日志（ELK/Loki）+ 完整性校验（哈希链）</td></tr>
+<tr><td style="text-align:left"><strong>监控数据源</strong></td><td style="text-align:left"><code>sandbox/</code> 确定性模拟数据</td><td style="text-align:left">换 Prometheus / Zabbix / 云监控。<strong>只改 <code>tools.js</code> 的实现，不动定义</strong></td></tr>
+<tr><td style="text-align:left"><strong>并发</strong></td><td style="text-align:left">单进程内存会话</td><td style="text-align:left">多实例需外置会话（Redis）+ 审批单加锁</td></tr>
+<tr><td style="text-align:left"><strong>安全隔离强度</strong></td><td style="text-align:left"><code>docker</code> 有网络隔离与资源限额</td><td style="text-align:left">更强的需要 gVisor / Firecracker；并明确"隔离 ≠ 防逃逸"</td></tr>
+<tr><td style="text-align:left"><strong>模型成本控制</strong></td><td style="text-align:left">轮次上限 + 历史裁剪</td><td style="text-align:left">加 token 预算、按用户配额、缓存常见取证结果</td></tr>
+</tbody></table></div>
+<p><strong>关于"私有化部署"的表述边界（重要）</strong></p>
+<p>本项目部署的是<strong>执行环境、工具和数据的自托管</strong>，模型本身始终通过 API 调用，<strong>没有把模型权重下载到本地</strong>。</p>
+<p>这两件事在技术汇报和简历里必须分开写：</p>
+<ul><li>✅ 可以说：Agent 编排层、工具层、执行环境、数据与审计都在自有机器上</li><li>❌ 不能说：私有化部署了大模型</li><li>❌ 不能说：了解 Codex 内部大模型原理（公开的 Agent 机制、调用流程、工具编排可以学；未公开的内部实现无法通过本项目掌握）</li><li>⚠️ 说"隔离执行"时要讲清程度：默认是 <code>mock</code> 模拟执行（零副作用），<code>docker</code> 模式才有真正的网络隔离与资源限额</li></ul>
+<hr>
+<h2 id="九-代码地图">九、代码地图</h2>
+<pre class="code diagram"><code>ai-ops-assistant/
+├── server/
+│   ├── index.js              (142)  服务入口、中间件装配、优雅退出（flush 审批单）
+│   ├── config.js             (116)  配置层，零依赖 .env 解析，无 Key 自动降级 mock
+│   ├── audit.js              ( 82)  append-only JSONL，同步写
+│   ├── routes/api.js         (494)  HTTP API：对话 SSE / lint / gate / 工具 / 审批 / 审计
+│   ├── agent/
+│   │   ├── loop.js           (271)  ★ Agent 多轮编排（权限过滤、轮次上限、强制收敛）
+│   │   ├── session.js        (108)  会话状态、历史裁剪（tool 消息不孤立）、TTL
+│   │   ├── tools.js          (434)  9 个只读工具 + 路径白名单 + 结果截断
+│   │   ├── write-tools.js    (248)  4 个写操作工具（execute 只收 approval_id）
+│   │   ├── scriptgen.js      (253)  6 个脚本模板，安全骨架 + 默认 dry-run
+│   │   ├── approval.js       (203)  审批状态机、职责分离、持久化
+│   │   └── executor.js       (480)  ★ 静态门禁 + 三后端执行（mock/docker/local）
+│   ├── security/rbac.js      ( 81)  角色权限矩阵，未知角色降级 viewer
+│   ├── llm/
+│   │   ├── provider.js       (393)  双协议接入 + 兼容性降级重试
+│   │   ├── mock.js           (519)  演示推理引擎（5 个故障场景）
+│   │   └── prompts.js        ( 68)  三种模式的系统提示词
+│   └── lib/
+│       ├── sse.js            ( 86)  ★ 手写 SSE 解析（缓冲 + \n\n 切分）
+│       ├── shell-lint.js     (341)  20 类 Shell 风险规则，每条带机器可执行 patch
+│       └── errors.js         ( 78)  结构化错误（code / retryable / hint）
+├── public/
+│   ├── index.html            (299)  四个视图 + 审计抽屉
+│   ├── app.js                (1272) SSE 消费、diff、审批、执行、权限控制
+│   └── styles.css            (477)  无框架样式
+├── sandbox/                         5 台模拟主机 + 12 条告警 + 确定性日志
+├── samples/risky-deploy.sh          故意写危险的示例脚本
+├── test/
+│   ├── smoke.mjs                    后端 74 项断言（自带服务）
+│   ├── unit-exec.mjs                门禁与执行器单测
+│   ├── browser-check.mjs            浏览器 41 项断言
+│   └── capture.mjs                  全流程界面截图
+└── docs/shots/                      13 张界面截图</code></pre>
+<p><strong>★ 标记的是最值得读的三个文件</strong>：<code>loop.js</code>（Agent 怎么编排）、<code>executor.js</code>（安全边界怎么划）、<code>sse.js</code>（流式怎么解析）。这三个把"调用 API"和"做一个能用的 Agent"之间的差距填上了。</p>
+<hr>
+<h2 id="附-一句话总结">附：一句话总结</h2>
+<blockquote><p>这个系统的价值不在于"用 AI 分析日志"，而在于<strong>它把 AI 放到了一个有边界的位置上</strong>：</p><p>让模型负责理解和表达，让代码负责取证和约束，让人负责批准和担责。</p><p>四道卡口（权限 → 门禁 → 职责分离 → 二次门禁）加上全程审计，</p><p>使得"AI 参与生产变更"这件事从"不敢用"变成了"可以谈"。</p></blockquote>
+</article>
+</body>
+</html>

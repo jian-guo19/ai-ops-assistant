@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>AI 运维故障分析与脚本助手 · SRE Copilot</title>
+  <meta name="description" content="面向运维场景的 AI 助手：基于只读工具取证的故障根因分析、Shell 脚本风险审查与人工确认修复、可回放的操作审计。支持 OpenAI 兼容接口与本地演示模式。">
+  <meta name="author" content="杜建国">
+  <meta name="keywords" content="运维,故障分析,Shell 脚本审查,Agent,工具调用,SSE,OpenAI API,LLM Ops">
+  <meta name="robots" content="index,follow">
+  <meta name="theme-color" content="#ffffff">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="AI 运维故障分析与脚本助手">
+  <meta property="og:description" content="日志告警分析、Shell 脚本校错、只读工具调用的三阶段运维 Agent 演示应用。">
+  <link rel="canonical" href="http://127.0.0.1:8787/">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232563eb'/%3E%3Cpath d='M9 21l5-11 5 11M11 18h6' stroke='white' stroke-width='2.4' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">跳到主要内容</a>
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">
+        <svg viewBox="0 0 32 32" width="26" height="26"><rect width="32" height="32" rx="8" fill="#2563eb"/><path d="M9 21l5-11 5 11M11 18h6" stroke="#fff" stroke-width="2.4" fill="none" stroke-linecap="round"/></svg>
+      </span>
+      <div class="brand-text">
+        <h1>AI 运维故障分析与脚本助手</h1>
+        <p>只读取证 · 人工确认 · 全程审计</p>
+      </div>
+    </div>
+    <div class="runtime" role="status" aria-live="polite">
+      <label class="role-picker">
+        <span class="role-picker-label">操作人</span>
+        <input id="actor-input" class="actor-input" value="duty-lead" aria-label="当前操作人名称">
+      </label>
+      <label class="role-picker">
+        <span class="role-picker-label">角色</span>
+        <select id="role-select" aria-label="切换操作角色（演示权限控制）">
+          <option value="viewer">观察员</option>
+          <option value="operator">运维执行</option>
+          <option value="approver" selected>变更审批人</option>
+        <option value="admin">管理员</option>
+        </select>
+      </label>
+      <span id="badge-mode" class="badge badge-info">加载中…</span>
+      <span id="badge-model" class="badge badge-ghost" title="当前使用的模型">—</span>
+      <span id="badge-protocol" class="badge badge-ghost" title="模型接口协议">—</span>
+      <button type="button" id="btn-audit" class="btn btn-ghost">审计日志</button>
+    </div>
+  </header>
+
+  <div class="layout" id="main">
+    <aside class="sidebar" aria-label="功能导航">
+      <button type="button" id="sidebar-toggle" class="sidebar-toggle" aria-expanded="false">功能区</button>
+
+      <nav class="tabs" role="tablist" aria-label="工作模式">
+        <button type="button" class="tab is-active" role="tab" aria-selected="true" data-view="incident">
+          <span class="tab-title">故障分析</span><span class="tab-sub">阶段 1 · 3</span>
+        </button>
+        <button type="button" class="tab" role="tab" aria-selected="false" data-view="script">
+          <span class="tab-title">脚本校错</span><span class="tab-sub">阶段 2</span>
+        </button>
+        <button type="button" class="tab" role="tab" aria-selected="false" data-view="inspector">
+          <span class="tab-title">工具沙箱</span><span class="tab-sub">阶段 3</span>
+        </button>
+        <button type="button" class="tab" role="tab" aria-selected="false" data-view="automation">
+          <span class="tab-title">自动化运维</span><span class="tab-sub">阶段 4</span>
+        </button>
+      </nav>
+
+      <section class="panel">
+        <h2 class="panel-title">内置故障场景</h2>
+        <ul id="scenario-list" class="scenario-list"><li class="muted">加载中…</li></ul>
+      </section>
+
+      <section class="panel">
+        <h2 class="panel-title">可用只读工具</h2>
+        <ul id="tool-list" class="tool-list"><li class="muted">加载中…</li></ul>
+        <p class="panel-note">全部工具均标记为 <code>readOnly</code>，服务端不存在任何执行或写入分支。</p>
+      </section>
+
+      <section class="panel panel-session">
+        <h2 class="panel-title">会话</h2>
+        <p class="kv"><span>ID</span><b id="session-id">未创建</b></p>
+        <p class="kv"><span>工具调用</span><b id="session-toolcalls">0</b></p>
+        <div class="btn-row">
+          <button type="button" id="btn-new-session" class="btn btn-ghost">新建会话</button>
+          <button type="button" id="btn-export" class="btn btn-ghost">导出分析</button>
+        </div>
+      </section>
+    </aside>
+
+    <main class="content">
+      <!-- ===================== 阶段 1：故障分析 ===================== -->
+      <section id="view-incident" class="view is-active" role="tabpanel" aria-label="故障分析">
+        <div id="chat-stream" class="chat-stream" aria-live="polite">
+          <div class="welcome">
+            <h2>把告警或日志贴进来，我会先取证再下结论</h2>
+            <p>分析过程中会调用右侧列出的只读工具（指标 / 日志 / 告警 / 服务状态），所有结论都会附上依据。</p>
+            <ul class="welcome-hints">
+              <li>「web-01 磁盘写满，Nginx 报 No space left on device」</li>
+              <li>「app-02 的 Java 服务反复重启，说是 OOM」</li>
+              <li>「gw-05 网关大量 502，判断是网关还是上游的问题」</li>
+            </ul>
+          </div>
+        </div>
+
+        <form id="chat-form" class="composer">
+          <label class="sr-only" for="chat-input">输入故障现象、日志或告警</label>
+          <textarea id="chat-input" rows="4" placeholder="粘贴告警文本或日志片段，例如：db-03 慢查询涨到 148 条/分钟…（Ctrl + Enter 发送）"></textarea>
+          <div class="composer-row">
+            <label class="switch">
+              <input type="checkbox" id="opt-tools" checked>
+              <span>允许调用只读工具取证</span>
+            </label>
+            <span id="status-line" class="status-line"></span>
+            <span class="spacer"></span>
+            <button type="submit" id="btn-send" class="btn btn-primary">分析</button>
+            <button type="button" id="btn-stop" class="btn btn-ghost" disabled>停止</button>
+          </div>
+        </form>
+      </section>
+
+      <!-- ===================== 阶段 2：脚本校错 ===================== -->
+      <section id="view-script" class="view" role="tabpanel" aria-label="脚本校错" hidden>
+        <div class="script-layout">
+          <div class="editor-pane">
+            <div class="pane-head">
+              <h2>Shell 脚本</h2>
+              <div class="pane-actions">
+                <button type="button" id="btn-load-sample" class="btn btn-ghost">载入示例</button>
+                <button type="button" id="btn-lint" class="btn btn-ghost">本地体检</button>
+                <button type="button" id="btn-ai-review" class="btn btn-primary">AI 审查</button>
+              </div>
+            </div>
+            <label class="sr-only" for="script-input">待审查的 Shell 脚本</label>
+            <textarea id="script-input" class="code-area" spellcheck="false" rows="26" placeholder="粘贴你的 Shell 脚本…"></textarea>
+            <p id="lint-summary" class="lint-summary"></p>
+          </div>
+
+          <div class="review-pane">
+            <div class="pane-head">
+              <h2>风险清单</h2>
+              <span id="issue-count" class="badge badge-ghost">0</span>
+            </div>
+            <ol id="issue-list" class="issue-list">
+              <li class="muted empty">先做本地体检或 AI 审查，风险项会列在这里。</li>
+            </ol>
+          </div>
+        </div>
+
+        <div id="diff-panel" class="diff-panel" hidden>
+          <div class="pane-head">
+            <h2>修改预览（diff）</h2>
+            <div class="pane-actions">
+              <button type="button" id="btn-apply" class="btn btn-primary">确认应用到编辑器</button>
+              <button type="button" id="btn-cancel-diff" class="btn btn-ghost">取消</button>
+            </div>
+          </div>
+          <div id="diff-body" class="diff-body"></div>
+        </div>
+      </section>
+
+      <!-- ===================== 阶段 3：工具沙箱 ===================== -->
+      <section id="view-inspector" class="view" role="tabpanel" aria-label="工具沙箱" hidden>
+        <div class="inspector-layout">
+          <div class="pane">
+            <div class="pane-head"><h2>工具与参数</h2></div>
+            <label class="field">
+              <span>工具</span>
+              <select id="ins-tool" aria-label="选择工具"></select>
+            </label>
+            <p id="ins-desc" class="ins-desc"></p>
+            <label class="field">
+              <span>参数（JSON）</span>
+              <textarea id="ins-args" class="code-area" rows="10" spellcheck="false">{}</textarea>
+            </label>
+            <div class="btn-row">
+              <button type="button" id="btn-invoke" class="btn btn-primary">执行（只读）</button>
+            </div>
+            <p id="ins-schema" class="ins-schema"></p>
+          </div>
+          <div class="pane">
+            <div class="pane-head"><h2>返回结果</h2><span id="ins-meta" class="badge badge-ghost"></span></div>
+            <pre id="ins-result" class="result-box">等待执行…</pre>
+          </div>
+        </div>
+      </section>
+      <!-- ===================== 阶段 4：自动化运维 ===================== -->
+      <section id="view-automation" class="view" role="tabpanel" aria-label="自动化运维" hidden>
+        <div class="automation-layout">
+          <div class="pane">
+            <div class="pane-head">
+              <h2>① 生成变更脚本</h2>
+              <span id="auto-exec-mode" class="badge badge-ghost"></span>
+            </div>
+
+            <label class="field">
+              <span>变更意图</span>
+              <textarea id="auto-intent" rows="3" placeholder="例如：清理 7 天前的过期日志 / 安全重启 nginx / 采集 web-01 诊断信息"></textarea>
+            </label>
+
+            <label class="field">
+              <span>目标主机（可选）</span>
+              <input id="auto-host" list="host-options" placeholder="web-01 / app-02 / db-03 / cache-04 / gw-05">
+              <datalist id="host-options"></datalist>
+            </label>
+
+            <div class="btn-row">
+              <button type="button" id="btn-auto-generate" class="btn btn-primary">生成草稿</button>
+              <button type="button" id="btn-auto-lint" class="btn btn-ghost">静态门禁体检</button>
+            </div>
+
+            <p id="auto-gate" class="gate-line"></p>
+
+            <label class="field">
+              <span>脚本草稿（可编辑）</span>
+              <textarea id="auto-script" class="code-area" rows="16" spellcheck="false" placeholder="在这里生成或粘贴脚本…"></textarea>
+            </label>
+
+            <div class="btn-row">
+              <button type="button" id="btn-auto-submit" class="btn btn-primary">② 提交审批</button>
+            </div>
+          </div>
+
+          <div class="pane">
+            <div class="pane-head">
+              <h2>③ 审批队列</h2>
+              <div class="pane-actions">
+                <select id="approval-filter" aria-label="按状态筛选审批单">
+                  <option value="">全部</option>
+                  <option value="pending">待审批</option>
+                  <option value="approved">已批准</option>
+                  <option value="rejected">已驳回</option>
+                  <option value="executed">已执行</option>
+                  <option value="denied">已拒绝入库</option>
+                </select>
+                <button type="button" id="btn-approval-refresh" class="btn btn-ghost btn-sm">刷新</button>
+              </div>
+            </div>
+            <div id="approval-stats" class="approval-stats"></div>
+            <ul id="approval-list" class="approval-list">
+              <li class="muted empty">暂无变更申请。</li>
+            </ul>
+          </div>
+        </div>
+
+        <div id="exec-panel" class="pane" hidden>
+          <div class="pane-head">
+            <h2>④ 隔离环境执行结果</h2>
+            <span id="exec-badge" class="badge badge-ghost"></span>
+          </div>
+          <div class="exec-meta" id="exec-meta"></div>
+          <div class="exec-block">
+            <h3>stdout</h3>
+            <pre id="exec-stdout" class="result-box">—</pre>
+          </div>
+          <div class="exec-block">
+            <h3>stderr</h3>
+            <pre id="exec-stderr" class="result-box">—</pre>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- 审计抽屉 -->
+  <div id="audit-drawer" class="drawer" hidden>
+    <div class="drawer-head">
+      <h2>操作审计</h2>
+      <button type="button" id="btn-audit-close" class="btn btn-ghost" aria-label="关闭审计面板">关闭</button>
+    </div>
+    <div class="audit-filters">
+      <label class="field-inline">
+        <span>类型</span>
+        <select id="audit-filter-type" aria-label="按类型筛选审计记录">
+          <option value="">全部</option>
+          <option value="user_message">用户提问</option>
+          <option value="tool_call">工具调用</option>
+          <option value="tool_denied">越权拦截</option>
+          <option value="approval_submit">审批提交</option>
+          <option value="approval_decision">审批决策</option>
+          <option value="approval_denied">门禁拒绝</option>
+          <option value="exec_finished">执行完成</option>
+          <option value="local_lint">本地体检</option>
+        </select>
+      </label>
+      <button type="button" id="btn-audit-export" class="btn btn-ghost btn-sm">导出 JSON</button>
+    </div>
+    <div id="audit-stats" class="audit-stats"></div>
+    <div id="audit-body" class="audit-body"></div>
+  </div>
+
+  <div id="toast" class="toast" role="alert" aria-live="assertive" hidden></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

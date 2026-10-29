@@ -1,0 +1,22 @@
+{
+  "name": "ai-ops-assistant",
+  "version": "1.0.0",
+  "description": "AI 运维故障分析与脚本助手：日志告警分析、Shell 脚本校错、只读工具取证、生成脚本→人工审批→隔离执行、权限与审计",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=18.17.0"
+  },
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "test": "node test/smoke.mjs",
+    "test:unit": "node test/unit-exec.mjs",
+    "test:browser": "node test/browser-check.mjs",
+    "test:all": "node test/unit-exec.mjs && node test/smoke.mjs && node test/browser-check.mjs",
+    "doc": "node docs/build-html.mjs"
+  },
+  "dependencies": {
+    "express": "^4.21.2"
+  }
+}

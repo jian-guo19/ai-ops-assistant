@@ -1,0 +1,9 @@
+node_modules/
+.env
+data/
+sandbox/logs/
+sandbox/workspace/
+*.log
+.DS_Store
+.idea/
+.vscode/

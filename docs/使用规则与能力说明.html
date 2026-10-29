@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI 运维故障分析助手 · 使用规则与能力说明</title>
+<style>
+  :root {
+    --ink: #1a1f26;
+    --ink-2: #4a5563;
+    --ink-3: #6b7785;
+    --line: #e3e8ef;
+    --line-soft: #eef1f5;
+    --bg: #ffffff;
+    --bg-soft: #f7f9fb;
+    --accent: #1f6feb;
+    --code-bg: #f6f8fa;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: -apple-system, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    font-size: 15.5px; line-height: 1.78;
+  }
+  .doc { max-width: 920px; margin: 0 auto; padding: 56px 40px 96px; }
+  h1 { font-size: 30px; line-height: 1.35; margin: 0 0 8px; letter-spacing: -.2px; }
+  h1 + p { color: var(--ink-3); font-size: 14px; margin-top: 0; }
+  h2 {
+    font-size: 22px; margin: 52px 0 16px; padding-bottom: 9px;
+    border-bottom: 1px solid var(--line); letter-spacing: -.1px;
+  }
+  h3 { font-size: 17.5px; margin: 34px 0 12px; color: #10161d; }
+  h4 { font-size: 15.5px; margin: 24px 0 8px; }
+  p { margin: 13px 0; }
+  strong { color: #0d131a; font-weight: 650; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code {
+    font-family: "JetBrains Mono", "Cascadia Mono", Consolas, "Liberation Mono",
+                 "Microsoft YaHei", "PingFang SC", monospace;
+    font-size: .88em; background: var(--code-bg); padding: 2px 5px;
+    border-radius: 4px; color: #b02a5b; border: 1px solid var(--line-soft);
+  }
+  pre.code {
+    background: var(--code-bg); border: 1px solid var(--line);
+    border-radius: 8px; padding: 16px 18px; overflow-x: auto; margin: 16px 0;
+    position: relative;
+  }
+  pre.code code {
+    background: none; border: 0; padding: 0; color: #24292f;
+    font-size: 12.8px; line-height: 1.62; white-space: pre;
+  }
+  /* 框图用更小的字号 + 允许横向滚动，保证框线不错位 */
+  pre.diagram code { font-size: 12px; line-height: 1.5; }
+  pre.diagram { background: #fbfcfd; }
+  blockquote {
+    margin: 18px 0; padding: 12px 18px; background: #f4f8ff;
+    border-left: 3px solid var(--accent); border-radius: 0 6px 6px 0;
+    color: var(--ink-2);
+  }
+  blockquote p { margin: 5px 0; }
+  ul, ol { margin: 12px 0; padding-left: 26px; }
+  li { margin: 6px 0; }
+  li > ul, li > ol { margin: 6px 0; }
+  hr { border: 0; border-top: 1px solid var(--line); margin: 40px 0; }
+  .table-wrap { overflow-x: auto; margin: 18px 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { border: 1px solid var(--line); padding: 8px 12px; vertical-align: top; }
+  th { background: var(--bg-soft); font-weight: 650; white-space: nowrap; }
+  tbody tr:nth-child(even) { background: #fcfdfe; }
+  @media print {
+    .doc { max-width: none; padding: 0; }
+    h2 { page-break-after: avoid; }
+    pre.code, table, blockquote { page-break-inside: avoid; }
+    pre.diagram code { font-size: 10.5px; }
+    body { font-size: 12.5px; }
+  }
+</style>
+</head>
+<body>
+<article class="doc">
+<h1 id="AI-运维故障分析助手-使用规则与能力说明">AI 运维故障分析助手 · 使用规则与能力说明</h1>
+<blockquote><p>这份文档回答两个问题：<strong>它究竟能做什么</strong>、<strong>用的时候必须遵守哪些规则</strong>。</p><p>它不讨论架构取舍——那部分在 <a href="技术设计文档.md">技术设计文档.md</a> 里。本文所有结论均对照源码核对过，</p><p>涉及"文档说法与代码实际不一致"的地方会单独标注。</p></blockquote>
+<hr>
+<h2 id="一-它是什么">一、它是什么</h2>
+<p>一个<strong>本地运行的运维 Agent</strong>，把一次运维处置拆成五个可审计的环节：</p>
+<pre class="code"><code>日志告警分析 → Shell 脚本校错 → 只读取证 → 生成脚本 → 人工审批 → 隔离执行
+   （理解现场）   （改别人的脚本）  （查证据）  （写新脚本）  （别人点头）  （跑起来）</code></pre>
+<p>核心特征是<strong>全程人工确认 + 全程审计留痕</strong>：AI 不会自己动手改任何东西，它只能产出"建议"， 每一步落地动作都需要一个人手持相应权限按下确认。</p>
+<h3 id="它不是">它不是</h3>
+<div class="table-wrap"><table><thead><tr><th style="text-align:left">常见误解</th><th style="text-align:left">实际情况</th></tr></thead><tbody>
+<tr><td style="text-align:left">一个会自动登录服务器处置故障的机器人</td><td style="text-align:left">默认 <code>EXEC_MODE=mock</code>，<strong>零副作用</strong>；真实执行需显式切换模式</td></tr>
+<tr><td style="text-align:left">一个接入了真实监控的平台</td><td style="text-align:left">数据来自 <code>sandbox/inventory.json</code> 的<strong>确定性模拟数据</strong>，换真实监控需改工具实现</td></tr>
+<tr><td style="text-align:left">一个私有化部署的大模型</td><td style="text-align:left">模型始终走 OpenAI 兼容 API，本地只部署了<strong>执行环境、工具和数据</strong></td></tr>
+<tr><td style="text-align:left">一个既有身份认证的系统</td><td style="text-align:left">角色靠请求头 <code>x-ops-role</code> 自报，<strong>任何人都能伪造</strong>，生产必须替换</td></tr>
+</tbody></table></div>
+<hr>
+<h2 id="二-它究竟能做什么">二、它究竟能做什么</h2>
+<h3 id="能力-1-故障分析-阶段-1">能力 1 · 故障分析（阶段 1）</h3>
+<p><strong>触发方式</strong>：在「故障分析」标签页输入日志片段/告警文本，或直接点内置场景。</p>
+<p><strong>输出是固定六段结构</strong>，不允许自由发挥：</p>
+<ol><li>结论摘要</li><li>证据链</li><li>可能原因（<strong>按可能性排序</strong>，每条带概率与判据）</li><li>排查步骤</li><li>修复建议（分"短期止血 / 长期根治"）</li><li>还需补充的信息</li></ol>
+<p><strong>硬性规则</strong>：每条结论必须引用工具返回的指标数值或日志原文。 文档里的表述是"不允许无依据输出"——这是提示词层面的约束，配合工具取证来保证。</p>
+<p><strong>内置 5 个演示场景</strong>：磁盘写满（含 inode）、JVM OOM、慢查询暴涨、Redis 下线、网关 502。 选场景后一键填入，无需自己编日志。</p>
+<blockquote><p>网关 502 这个场景是设计得最巧的一个：结论明确说"网关是受害者，只在 gw-05 上排查找不到根因"，</p><p>引导追到上游 app-02 的 OOM 重启周期。它演示的是<strong>因果链推断</strong>，不是单点查指标。</p></blockquote>
+<hr>
+<h3 id="能力-2-脚本校错-阶段-2">能力 2 · 脚本校错（阶段 2）</h3>
+<p><strong>输入</strong>：任意 Shell 脚本（或载入 <code>samples/risky-deploy.sh</code>）。</p>
+<p><strong>三段式流程，顺序不可颠倒</strong>：</p>
+<div class="table-wrap"><table><thead><tr><th style="text-align:left">步骤</th><th style="text-align:left">谁来做</th><th style="text-align:left">特点</th></tr></thead><tbody>
+<tr><td style="text-align:left">① 本地静态体检</td><td style="text-align:left"><code>server/lib/shell-lint.js</code></td><td style="text-align:left">确定性规则，毫秒级，零成本、零延迟、零幻觉</td></tr>
+<tr><td style="text-align:left">② AI 语义补充</td><td style="text-align:left">模型</td><td style="text-align:left">按强约束 JSON Schema 返回，不自由行文</td></tr>
+<tr><td style="text-align:left">③ 人工确认</td><td style="text-align:left">你</td><td style="text-align:left">每条修复先出 diff，点了"确认应用"才落地</td></tr>
+</tbody></table></div>
+<p><strong>AI 必须返回的结构</strong>：</p>
+<pre class="code" data-lang="json"><code>{ "summary": "...", "overall_risk": "high",
+  "issues": [ { "severity": "high", "line": 12, "risk": "...", "suggestion": "...", "patch": {} } ] }</code></pre>
+<p><strong>补丁只有两种形态，且都是精确定位</strong>：</p>
+<ul><li><code>{ type: 'replace', find, replace }</code> —— 逐字替换，<code>find</code> 必须是原文子串</li><li><code>{ type: 'insert', anchor, position, text }</code> —— 在锚点行前/后插入</li></ul>
+<p><strong>关键规则：原文件永远不会被直接改写。</strong> 前端逐字定位替换生成"修改后文本"， 先渲染 diff 给你看，你不点确认，编辑器内容一个字符都不变。 这是为了堵住"让 AI 自由改写整份文件"导致的大面积误改。</p>
+<h4 id="体检规则清单-20-条-按严重度排序">体检规则清单（20 条，按严重度排序）</h4>
+<div class="table-wrap"><table><thead><tr><th style="text-align:left">严重度</th><th style="text-align:left">规则</th><th style="text-align:left">典型风险</th></tr></thead><tbody>
+<tr><td style="text-align:left">critical</td><td style="text-align:left"><code>rm -rf</code> 作用于未加引号的变量</td><td style="text-align:left">变量为空时退化成 <code>rm -rf /*</code></td></tr>
+<tr><td style="text-align:left">critical</td><td style="text-align:left"><code>curl | bash</code> / <code>wget | sh</code></td><td style="text-align:left">执行未经审计的远端内容，无法校验版本</td></tr>
+<tr><td style="text-align:left">critical</td><td style="text-align:left"><code>chpasswd</code> 批量改密码</td><td style="text-align:left">时机不对会把自己锁在系统外，不可回滚</td></tr>
+<tr><td style="text-align:left">high</td><td style="text-align:left">缺少 <code>set -euo pipefail</code></td><td style="text-align:left"><code>cd</code> 失败后继续 <code>rm</code>，删到错误目录</td></tr>
+<tr><td style="text-align:left">high</td><td style="text-align:left"><code>rm -rf</code> 用变量但缺前置校验</td><td style="text-align:left">值不合预期时同样不可逆</td></tr>
+<tr><td style="text-align:left">high</td><td style="text-align:left">对根路径/通配路径强制删除</td><td style="text-align:left">系统级损坏</td></tr>
+<tr><td style="text-align:left">high</td><td style="text-align:left">明文机密写进变量（pass/pwd/secret/token/key）</td><td style="text-align:left">随脚本进 Git、镜像、CI 日志</td></tr>
+<tr><td style="text-align:left">high</td><td style="text-align:left">数据库密码走命令行参数</td><td style="text-align:left"><code>ps -ef</code> 可见，进 history 与审计日志</td></tr>
+<tr><td style="text-align:left">high</td><td style="text-align:left"><code>kill -9</code> / <code>killall</code> / <code>pkill -9</code></td><td style="text-align:left">来不及优雅退出，丢数据、连接中断</td></tr>
+<tr><td style="text-align:left">high</td><td style="text-align:left"><code>echo</code> 打印凭据变量</td><td style="text-align:left">明文进终端与日志文件</td></tr>
+<tr><td style="text-align:left">medium</td><td style="text-align:left">缺少 shebang</td><td style="text-align:left">可能被 <code>dash</code>/<code>sh</code> 解释，行为不一致</td></tr>
+<tr><td style="text-align:left">medium</td><td style="text-align:left"><code>|| true</code> 吞掉错误</td><td style="text-align:left">迁移失败被标记成功，上线半成品</td></tr>
+<tr><td style="text-align:left">medium</td><td style="text-align:left"><code>cd</code> 之后未校验</td><td style="text-align:left">后续相对路径操作全错位</td></tr>
+<tr><td style="text-align:left">medium</td><td style="text-align:left">命令参数中的变量未加引号</td><td style="text-align:left">空格分词、<code>-</code> 开头被当选项</td></tr>
+<tr><td style="text-align:left">medium</td><td style="text-align:left">缺少备份或回滚入口</td><td style="text-align:left">新版本不可用时无法分钟级回滚</td></tr>
+<tr><td style="text-align:left">low</td><td style="text-align:left"><code>ps aux | grep</code> 缺 <code>grep -v grep</code></td><td style="text-align:left">匹配到 grep 自身，作用于错误 PID</td></tr>
+<tr><td style="text-align:left">low</td><td style="text-align:left">用固定 <code>sleep</code> 等就绪</td><td style="text-align:left">高负载时不够，空闲时白等</td></tr>
+<tr><td style="text-align:left">low</td><td style="text-align:left">用 <code>$?</code> 判断上一条命令</td><td style="text-align:left">中间插一条 <code>echo</code> 就覆盖了</td></tr>
+<tr><td style="text-align:left">low</td><td style="text-align:left">缺少 <code>trap</code> 清理</td><td style="text-align:left">中断后残留临时文件、锁、挂载点</td></tr>
+<tr><td style="text-align:left">low</td><td style="text-align:left">开启 <code>set -x</code></td><td style="text-align:left">追踪输出会展开变量，泄露凭据</td></tr>
+</tbody></table></div>
+<p><strong>其中 7 条规则附带可机读的 patch</strong>（shebang、严格模式、rm -rf、curl|bash、明文凭据、cd 校验、sleep 轮询、备份入口）， 其余只给建议不自动改——因为改法依赖具体上下文，硬套反而更危险。</p>
+<hr>
+<h3 id="能力-3-只读取证-阶段-3">能力 3 · 只读取证（阶段 3）</h3>
+<p><strong>8 个只读工具</strong>（另有 <code>list_approvals</code> 归在写工具组，权限却是只读的 <code>audit:read</code>，合计 13 个工具）：</p>
+<div class="table-wrap"><table><thead><tr><th style="text-align:left">工具</th><th style="text-align:left">用途</th></tr></thead><tbody>
+<tr><td style="text-align:left"><code>list_hosts</code></td><td style="text-align:left">列出受管主机（角色、IP、环境、规格），<strong>排障第一步</strong></td></tr>
+<tr><td style="text-align:left"><code>query_metrics</code></td><td style="text-align:left">查时序指标（CPU/内存/IO/慢查询等）</td></tr>
+<tr><td style="text-align:left"><code>get_alerts</code></td><td style="text-align:left">当前未恢复告警，可按主机与严重级别过滤</td></tr>
+<tr><td style="text-align:left"><code>query_logs</code></td><td style="text-align:left">按主机/关键字/时间窗查日志</td></tr>
+<tr><td style="text-align:left"><code>check_services</code></td><td style="text-align:left">关键服务状态（<code>systemctl status</code> 的只读视图）</td></tr>
+<tr><td style="text-align:left"><code>top_processes</code></td><td style="text-align:left">进程资源占用 TOP N</td></tr>
+<tr><td style="text-align:left"><code>read_file</code></td><td style="text-align:left">读文件（走路径白名单）</td></tr>
+<tr><td style="text-align:left"><code>get_current_time</code></td><td style="text-align:left">服务器当前时间，用于对齐告警与日志窗口</td></tr>
+<tr><td style="text-align:left"><code>list_approvals</code></td><td style="text-align:left">列审批单（权限 <code>audit:read</code>，所有角色可用）</td></tr>
+</tbody></table></div>
+<p><strong>4 个写操作工具</strong>：</p>
+<div class="table-wrap"><table><thead><tr><th style="text-align:left">工具</th><th style="text-align:left">所需权限</th></tr></thead><tbody>
+<tr><td style="text-align:left"><code>generate_script</code></td><td style="text-align:left"><code>script:generate</code></td></tr>
+<tr><td style="text-align:left"><code>submit_for_approval</code></td><td style="text-align:left"><code>approval:submit</code></td></tr>
+<tr><td style="text-align:left"><code>approve_change</code></td><td style="text-align:left"><code>approval:decide</code></td></tr>
+<tr><td style="text-align:left"><code>execute_approved</code></td><td style="text-align:left"><code>exec:sandbox</code></td></tr>
+</tbody></table></div>
+<p><strong>关键行为：工具报错不终止会话。</strong> 错误文本会作为工具结果回灌给模型， 模型看到"可用 source 列表"后自己换路子重试——这是真实 Agent 与"一问一答"的分水岭。 权限不足同理：把"权限不足"回灌，而不是中断。</p>
+<hr>
+<h3 id="能力-4-自动化运维-阶段-4">能力 4 · 自动化运维（阶段 4）</h3>
+<p>四步，每一步都是不可跳过的卡口：</p>
+<pre class="code"><code>意图 → ①生成草稿 → ②静态门禁 → ③提交审批 → ④隔离执行
+       scriptgen      gate         approval      executor
+       ↑安全骨架    ↑高危直接拒    ↑职责分离     ↑只认 approval_id</code></pre>
+<h4 id="生成-6-个内置模板">① 生成：6 个内置模板</h4>
+<p>日志清理 / 重启服务 / 磁盘巡检 / 配置备份 / 健康检查 / 诊断采集，按意图关键词匹配。</p>
+<p>生成的脚本<strong>自带三件套</strong>，不是裸脚本：</p>
+<ul><li><code>set -euo pipefail</code></li><li><code>trap ... EXIT</code> 清理与退出码捕获</li><li><strong>默认 dry-run</strong> —— 必须显式传 <code>--apply</code> 才真正落地</li></ul>
+<h4 id="门禁-两级判定">② 门禁：两级判定</h4>
+<p><strong><code>blocked</code>（直接拒绝入库，返回 <code>403 GATE_BLOCKED</code>，审批也救不回来）—— 14 条：</strong></p>
+<p><code>rm -rf</code> · <code>mkfs</code> · <code>dd if=</code> · <code>chpasswd</code> · <code>shutdown/reboot/poweroff/halt</code> · <code>init/telinit 0|6</code> · 管道执行 Shell（<code>| sh</code> <code>| bash</code>） · <code>curl|wget</code> 下载执行 · <code>chmod/chown 777</code> · 直接写块设备（<code>&gt; /dev/sda</code>） · <code>DROP DATABASE/TABLE</code> · 无 <code>WHERE</code> 的 <code>DELETE FROM</code> · <code>userdel/groupdel</code> · <code>systemctl stop/disable/mask</code></p>
+<p><strong><code>needs_approval</code>（可入库，但必须人工批准）—— 4 条：</strong></p>
+<p><code>find -delete</code> · <code>systemctl restart</code> · <code>kill/killall/pkill</code> · <code>cp -f</code> / <code>mv -f</code></p>
+<p><strong>其余脚本一律 <code>needs_approval</code></strong>，包括纯只读脚本——策略就是"任何执行都要人点头"， 不设"看起来无害所以放行"的例外。</p>
+<blockquote><p>门禁匹配前会先做<strong>引号感知的注释剥离</strong>。这一步修掉了一个真实误判：日志清理模板的注释里</p><p>写着"用 <code>find -delete</code> 而不是 <code>rm -rf</code>"，结果脚本被自己的注释判死。</p><p>注释剥离要感知引号，否则 <code>echo "# not a comment"</code> 会被截断。</p></blockquote>
+<h4 id="审批-状态机-职责分离">③ 审批：状态机 + 职责分离</h4>
+<pre class="code"><code>draft → pending → approved / rejected → executed
+                ↘ denied（门禁处被拒，从未入库）</code></pre>
+<p><strong>提交人不能批准自己提交的变更</strong>，HTTP 层与工具层<strong>双重拦截</strong>。 演示时可设 <code>ALLOW_SELF_APPROVAL=1</code> 放开，默认关闭。</p>
+<h4 id="执行-三种模式">④ 执行：三种模式</h4>
+<div class="table-wrap"><table><thead><tr><th style="text-align:left">模式</th><th style="text-align:left">行为</th><th style="text-align:left">适用</th></tr></thead><tbody>
+<tr><td style="text-align:left"><code>mock</code>（默认）</td><td style="text-align:left">逐行模拟输出，标注 <code>simulated: true</code>，<strong>零副作用</strong></td><td style="text-align:left">演示、CI</td></tr>
+<tr><td style="text-align:left"><code>docker</code></td><td style="text-align:left"><code>docker run --rm --network=none --memory=256m --cpus=0.5 --pids-limit=64</code>，工作区只读挂载</td><td style="text-align:left">真要跑</td></tr>
+<tr><td style="text-align:left"><code>local</code></td><td style="text-align:left">受限解释器，只认 21 个只读命令 + 9 个内建，<strong>永不调用系统 shell</strong></td><td style="text-align:left">无 Docker</td></tr>
+</tbody></table></div>
+<p><strong>本节最重要的一条设计</strong>：</p>
+<blockquote><p><code>execute_approved</code> <strong>只接受 <code>approval_id</code>，不接受脚本文本</strong>。</p><p>执行路径上没有任何"传入任意脚本直接执行"的分支——接口形状本身就是防绕过的。</p><p>即使有人拿到 <code>exec:sandbox</code> 权限，能执行的也只是"别人提交、别人批准过、且通过门禁"的那一份。</p><p>执行前还会<strong>重跑一遍门禁</strong>并重新校验状态为 <code>approved</code>。</p></blockquote>
+<hr>
+<h3 id="能力-5-权限与审计-阶段-5">能力 5 · 权限与审计（阶段 5）</h3>
+<p><strong>4 个角色，8 个权限点</strong>：</p>
+<div class="table-wrap"><table><thead><tr><th style="text-align:left">角色</th><th style="text-align:center">chat:read</th><th style="text-align:center">tool:invoke</th><th style="text-align:center">script:lint</th><th style="text-align:center">script:generate</th><th style="text-align:center">approval:submit</th><th style="text-align:center">approval:decide</th><th style="text-align:center">exec:sandbox</th><th style="text-align:center">audit:read</th></tr></thead><tbody>
+<tr><td style="text-align:left">viewer 观察员</td><td style="text-align:center">✓</td><td style="text-align:center">✓</td><td style="text-align:center">✓</td><td style="text-align:center">—</td><td style="text-align:center">—</td><td style="text-align:center">—</td><td style="text-align:center">—</td><td style="text-align:center">✓</td></tr>
+<tr><td style="text-align:left">operator 运维执行</td><td style="text-align:center">✓</td><td style="text-align:center">✓</td><td style="text-align:center">✓</td><td style="text-align:center">✓</td><td style="text-align:center">✓</td><td style="text-align:center">—</td><td style="text-align:center">—</td><td style="text-align:center">✓</td></tr>
+<tr><td style="text-align:left">approver 变更审批人</td><td style="text-align:center">✓</td><td style="text-align:center">✓</td><td style="text-align:center">✓</td><td style="text-align:center">✓</td><td style="text-align:center">✓</td><td style="text-align:center">✓</td><td style="text-align:center">✓</td><td style="text-align:center">✓</td></tr>
+<tr><td style="text-align:left">admin 管理员</td><td style="text-align:center">✓</td><td style="text-align:center">✓</td><td style="text-align:center">✓</td><td style="text-align:center">✓</td><td style="text-align:center">✓</td><td style="text-align:center">✓</td><td style="text-align:center">✓</td><td style="text-align:center">✓</td></tr>
+</tbody></table></div>
+<p><strong>权限规则</strong>：</p>
+<ul><li>每个工具在自己定义里声明 <code>requiredPermission</code>，不是散落在 handler 里的 <code>if</code></li><li><strong>Agent 循环按角色过滤可用工具</strong>——没权限的工具根本不会出现在给模型的工具列表里</li><li>未知角色一律降级为 <code>viewer</code>（最小权限原则）</li><li><strong>真正的边界在服务端</strong>：前端置灰只是体验，直接发 HTTP 请求一样被拒 403</li></ul>
+<blockquote><p>⚠️ <strong>文档与实现不一致（实测发现）</strong>：README 写 <code>admin</code> 拥有"全部权限"，但 <code>rbac.js</code> 里</p><p><code>admin: { permissions: [...APPROVER] }</code>——<strong>与 approver 完全相同的权限集</strong>，只是标签不同。</p><p>也就是说当前代码里<strong>不存在"只有 admin 能做而 approver 不能做"的操作</strong>。</p><p>这不影响使用，但如果要演示"管理员比审批人更高一级"，需要自己补权限点。</p></blockquote>
+<p><strong>审计</strong>：</p>
+<ul><li>append-only JSONL，落 <code>data/audit.log</code>，<strong>同步写入</strong>（返回时已落盘，可被立即读取验证）</li><li>每条含 <code>ts / type / actor / role / 入参 / 结果 / 耗时</code></li><li>覆盖 6 类事件：<code>chat</code> / <code>tool_call</code> / <code>tool_denied</code> / <code>approval_submit</code> / <code>approval_decision</code> / <code>exec_finished</code></li><li>界面审计抽屉可按类型过滤，<code>GET /api/audit/export</code> 导出 JSONL</li><li>可直接接 SIEM</li></ul>
+<hr>
+<h2 id="三-使用规则">三、使用规则</h2>
+<h3 id="规则集-A-环境与启动">规则集 A · 环境与启动</h3>
+<div class="table-wrap"><table><thead><tr><th style="text-align:left">项目</th><th style="text-align:left">要求</th></tr></thead><tbody>
+<tr><td style="text-align:left">Node.js</td><td style="text-align:left"><code>&gt;= 18.17.0</code>（<code>package.json</code> 声明）</td></tr>
+<tr><td style="text-align:left">运行时依赖</td><td style="text-align:left">只有 <code>express</code>，<strong>没有其他运行时依赖</strong></td></tr>
+<tr><td style="text-align:left">端口</td><td style="text-align:left">默认 <code>8787</code>，改 <code>PORT=8800 npm start</code></td></tr>
+<tr><td style="text-align:left">绑定地址</td><td style="text-align:left">默认 <code>127.0.0.1</code>，<strong>生产必须改</strong>并加反代认证</td></tr>
+<tr><td style="text-align:left">无 Key 运行</td><td style="text-align:left">自动进入演示模式，界面与流程完整可跑</td></tr>
+</tbody></table></div>
+<pre class="code" data-lang="bash"><code>npm install
+npm start            # 打开 http://127.0.0.1:8787
+cp .env.example .env # 要接真模型时填 Key</code></pre>
+<p><strong>演示模式下 Agent 依然真实执行"规划工具 → 取证 → 回灌 → 成文"的多轮循环</strong>， 只是推理换成本地规则引擎。链路、事件流、界面与真实模型一致——所以它可被当作可靠的演示。</p>
+<h3 id="规则集-B-五个标签页各自的用法">规则集 B · 五个标签页各自的用法</h3>
+<h4 id="1-故障分析">1）故障分析</h4>
+<ul><li>✅ 可以直接点场景，也可以用自己的一段真实日志</li><li>✅ 允许 AI 调只读工具补证据</li><li>❌ <strong>不要把生产环境的真实口令、内网地址贴进去</strong>——内容会进会话历史与审计日志</li><li>⚠️ 结论里的"可能性排序"是模型判断，<strong>不是统计概率</strong>，不可当故障概率用</li></ul>
+<h4 id="2-脚本校错">2）脚本校错</h4>
+<ul><li>✅ 先跑本地体检（毫秒级），再看 AI 补充</li><li>✅ 每条修改<strong>必须看过 diff 再确认</strong></li><li>❌ <strong>不要点"全部应用"跳过逐条审阅</strong>——patch 是逐字替换，上下文不匹配时不会报错，只会静默不生效</li><li>⚠️ 体检规则是<strong>模式匹配</strong>，能抓典型反模式，但抓不到"逻辑正确但业务上行不通"</li></ul>
+<h4 id="3-工具沙箱">3）工具沙箱</h4>
+<ul><li>✅ 可以手动调任一只读工具验证返回结构</li><li>✅ 可以用来演示路径穿越被拒（试 <code>../../etc/passwd</code>）</li><li>❌ 没有任何写操作工具可供手动调用——<strong>执行只能由审批单驱动</strong></li></ul>
+<h4 id="4-自动化运维">4）自动化运维</h4>
+<ul><li>✅ 选模板 → 生成 → 看门禁结论 → 提交 → <strong>换个身份</strong>批准 → 执行</li><li>❌ <strong>不能自己批自己</strong>（默认策略）</li><li>❌ 门禁 <code>blocked</code> 的脚本<strong>不能被审批放行</strong>，这是设计而非缺陷</li><li>⚠️ 生成的脚本默认 dry-run，<strong>真正生效要加 <code>--apply</code></strong></li></ul>
+<h4 id="5-权限与审计">5）权限与审计</h4>
+<ul><li>✅ 顶栏可切身份，按钮即时置灰/恢复</li><li>✅ 审计抽屉按类型过滤、导出 JSONL</li><li>❌ 演示用身份切换是<strong>请求头</strong>，生产绝不能这样上</li></ul>
+<h3 id="规则集-C-安全红线-写死在代码里-不靠提示词约束">规则集 C · 安全红线（写死在代码里，不靠提示词约束）</h3>
+<p>这七条是"规则"里最硬的部分——它们不是靠模型自觉，而是代码结构上就没有那条路：</p>
+<ol><li><strong>只读工具服务端不存在任何 <code>exec/spawn/write</code> 分支</strong>——不是"禁止调用"，是"没有这个函数"</li><li><strong><code>read_file</code> / <code>query_logs</code> 走路径白名单</strong>（<code>sandbox/</code> 与 <code>samples/</code>），任何 <code>..</code> 穿越直接拒绝</li><li><strong>工具结果统一截断</strong>，防止单次大结果撑爆模型上下文</li><li><strong>每次工具调用写 append-only 审计日志</strong></li><li><strong><code>execute_approved</code> 只收 <code>approval_id</code></strong>，不收脚本文本</li><li><strong>执行前重跑门禁</strong>，并重新校验状态为 <code>approved</code></li><li><strong>未知角色降级 <code>viewer</code></strong></li></ol>
+<h3 id="规则集-D-执行模式的三条使用纪律">规则集 D · 执行模式的三条使用纪律</h3>
+<div class="table-wrap"><table><thead><tr><th style="text-align:left">模式</th><th style="text-align:left">纪律</th></tr></thead><tbody>
+<tr><td style="text-align:left"><code>mock</code></td><td style="text-align:left">默认就用它。看到 <code>simulated: true</code> 就知道<strong>什么都没发生</strong></td></tr>
+<tr><td style="text-align:left"><code>docker</code></td><td style="text-align:left">先确认 Docker daemon <strong>不与生产共享命名空间</strong>；镜像是 <code>alpine:3.19</code>，脚本里的 <code>bash</code> 语法可能不可用</td></tr>
+<tr><td style="text-align:left"><code>local</code></td><td style="text-align:left">需要<strong>双重开关</strong>：<code>EXEC_MODE=local</code> <strong>且</strong> <code>EXEC_ALLOW_LOCAL=true</code>，缺一个都拒绝</td></tr>
+</tbody></table></div>
+<p><strong><code>local</code> 模式的真实能力边界（重要，容易被误读）</strong>：</p>
+<p>它<strong>不是</strong>一个真 bash。它逐行执行，且：</p>
+<ul><li>只认 21 个只读命令：<code>echo ls cat date pwd df free uptime id uname head tail wc du ps whoami hostname stat which env grep find</code></li><li>9 个 shell 内建只标记"已识别、无副作用"，不真正执行</li><li><strong>控制结构（<code>if/for/while/case/function/trap</code>）直接跳过</strong></li><li><strong>变量赋值直接跳过</strong></li><li>参数含 <code>; &amp; | </code> $ &lt; &gt; ( ) { } [ ] ! * ?` 任一元字符 → 整行拒绝</li><li>文件访问限定在 <code>sandbox/workspace/</code> 内，越界报错</li></ul>
+<p>所以 <code>local</code> 模式的用途是<strong>演示"隔离到什么程度"</strong>，不是"跑真实运维脚本"。</p>
+<hr>
+<h2 id="四-能力边界-它做不到什么">四、能力边界：它做不到什么</h2>
+<p>写清这一节，比写它能做什么更重要。</p>
+<h3 id="1-默认不真执行">1. 默认不真执行</h3>
+<p><code>EXEC_MODE=mock</code> 时脚本被逐行"演"一遍，输出带 <code>simulated: true</code>。 <strong>任何把 mock 输出当成"已在服务器验证"的说法都是错的。</strong></p>
+<h3 id="2-docker-才有真隔离-local-没有">2. <code>docker</code> 才有真隔离，<code>local</code> 没有</h3>
+<p><code>docker</code> 模式有真正的 <code>--network=none</code> + 资源限额 + 只读挂载。 <code>local</code> 是"受限解释器"——安全来自"只认白名单命令"，<strong>不是来自"验证过的沙箱逃逸防护"</strong>。 这两句话在对外表述时必须分清。</p>
+<h3 id="3-数据是模拟的">3. 数据是模拟的</h3>
+<p><code>sandbox/inventory.json</code> 由 <code>node sandbox/gen-fixtures.mjs</code> 种子化生成， 保证多次查询结果一致（否则模型会因前后证据矛盾而胡乱归因）。</p>
+<p><strong>换成真实数据源只改实现、不动定义</strong>：</p>
+<pre class="code" data-lang="js"><code>// 现在：读 sandbox/inventory.json
+// Prometheus: GET /api/v1/query_range
+// Zabbix:     zabbix.history.get
+// 阿里云监控: DescribeMetricList</code></pre>
+<h3 id="4-身份是自报的">4. 身份是自报的</h3>
+<p><code>x-ops-actor</code> / <code>x-ops-role</code> 请求头由前端自由设置。<strong>任何人改一下请求头就是 admin。</strong> 生产必须换成 SSO / OIDC / 堡垒机下发的真实身份。</p>
+<h3 id="5-审批单不是不可篡改的">5. 审批单不是不可篡改的</h3>
+<p>落 <code>data/approvals.json</code> 单文件。生产应换数据库并加行级锁与不可篡改存储。</p>
+<h3 id="6-模型本身没被私有化">6. 模型本身没被私有化</h3>
+<p>本地部署的是<strong>执行环境、工具、数据</strong>；模型始终通过 API 调用。 "私有化部署执行环境" ≠ "私有化部署大模型"，这两句混着说会被直接判定为夸大。</p>
+<hr>
+<h2 id="五-配置项速查">五、配置项速查</h2>
+<div class="table-wrap"><table><thead><tr><th style="text-align:left">变量</th><th style="text-align:left">默认</th><th style="text-align:left">作用</th></tr></thead><tbody>
+<tr><td style="text-align:left"><code>LLM_MODE</code></td><td style="text-align:left"><code>auto</code></td><td style="text-align:left"><code>auto</code> 有 Key 走真模型 / <code>live</code> 强制真模型 / <code>mock</code> 强制演示</td></tr>
+<tr><td style="text-align:left"><code>LLM_PROTOCOL</code></td><td style="text-align:left"><code>chat_completions</code></td><td style="text-align:left">或 <code>responses</code>（支持 <code>previous_response_id</code>）</td></tr>
+<tr><td style="text-align:left"><code>OPENAI_API_KEY</code></td><td style="text-align:left">空</td><td style="text-align:left">留空即演示模式</td></tr>
+<tr><td style="text-align:left"><code>OPENAI_BASE_URL</code></td><td style="text-align:left">官方</td><td style="text-align:left">任意 OpenAI 兼容网关</td></tr>
+<tr><td style="text-align:left"><code>OPENAI_MODEL</code></td><td style="text-align:left"><code>gpt-4o-mini</code></td><td style="text-align:left">—</td></tr>
+<tr><td style="text-align:left"><code>OPENAI_TEMPERATURE</code></td><td style="text-align:left"><code>0.2</code></td><td style="text-align:left">低温度，减少归因漂移</td></tr>
+<tr><td style="text-align:left"><code>LLM_TIMEOUT_MS</code></td><td style="text-align:left"><code>60000</code></td><td style="text-align:left">—</td></tr>
+<tr><td style="text-align:left"><code>AGENT_MAX_TURNS</code></td><td style="text-align:left"><code>6</code></td><td style="text-align:left">单次提问最多几轮「推理→工具」，超限强制收敛</td></tr>
+<tr><td style="text-align:left"><code>AGENT_MAX_HISTORY</code></td><td style="text-align:left"><code>40</code></td><td style="text-align:left">历史裁剪上限</td></tr>
+<tr><td style="text-align:left"><code>TOOL_TIMEOUT_MS</code></td><td style="text-align:left"><code>8000</code></td><td style="text-align:left">工具超时</td></tr>
+<tr><td style="text-align:left"><code>PORT</code> / <code>HOST</code></td><td style="text-align:left"><code>8787</code> / <code>127.0.0.1</code></td><td style="text-align:left">—</td></tr>
+<tr><td style="text-align:left"><code>AUDIT_ENABLED</code></td><td style="text-align:left"><code>true</code></td><td style="text-align:left">—</td></tr>
+<tr><td style="text-align:left"><code>MAX_LOG_LINES</code></td><td style="text-align:left"><code>200</code></td><td style="text-align:left">日志返回行数上限</td></tr>
+<tr><td style="text-align:left"><code>EXEC_MODE</code></td><td style="text-align:left"><code>mock</code></td><td style="text-align:left"><code>mock</code> / <code>docker</code> / <code>local</code></td></tr>
+<tr><td style="text-align:left"><code>EXEC_ALLOW_LOCAL</code></td><td style="text-align:left"><code>false</code></td><td style="text-align:left"><code>local</code> 的二次确认开关</td></tr>
+<tr><td style="text-align:left"><code>ALLOW_SELF_APPROVAL</code></td><td style="text-align:left"><code>0</code></td><td style="text-align:left">设 <code>1</code> 允许自批（仅演示）</td></tr>
+<tr><td style="text-align:left"><code>CORS_ORIGIN</code></td><td style="text-align:left">空</td><td style="text-align:left">仅前端独立部署时设置</td></tr>
+</tbody></table></div>
+<hr>
+<h2 id="六-三条典型路径">六、三条典型路径</h2>
+<h3 id="路径-A-排一个故障-只读-零风险">路径 A · 排一个故障（只读，零风险）</h3>
+<pre class="code"><code>故障分析页 → 贴日志 → AI 调 list_hosts 确认主机
+        → query_metrics / get_alerts / query_logs 取证
+        → 输出六段结论 → 你照着排查步骤处理</code></pre>
+<p>全过程不产生任何写操作。角色用 <code>viewer</code> 就够。</p>
+<h3 id="路径-B-改一份别人的脚本">路径 B · 改一份别人的脚本</h3>
+<pre class="code"><code>脚本校错页 → 载入脚本 → 本地体检出 20 条 → AI 补充语义问题
+        → 逐条看 diff → 逐条确认应用 → 人工复核 → 提交仓库</code></pre>
+<p>角色 <code>viewer</code>（<code>script:lint</code> 已包含）。</p>
+<h3 id="路径-C-跑一次变更-完整四步">路径 C · 跑一次变更（完整四步）</h3>
+<pre class="code"><code>自动化运维页 → 选模板 → 生成（自带 dry-run + trap + strict）
+  → 门禁体检（blocked 就到此为止）
+  → 提交审批（operator）
+  → 换身份批准（approver，自己不能批自己）
+  → 执行（approver，只传 approval_id）
+  → 看 stdout + 审计留痕</code></pre>
+<hr>
+<h2 id="七-常见问题">七、常见问题</h2>
+<div class="table-wrap"><table><thead><tr><th style="text-align:left">现象</th><th style="text-align:left">原因与处理</th></tr></thead><tbody>
+<tr><td style="text-align:left">端口被占用</td><td style="text-align:left"><code>PORT=8800 npm start</code></td></tr>
+<tr><td style="text-align:left">中转站报 400</td><td style="text-align:left">多为不支持 <code>parallel_tool_calls</code>/<code>stream_options</code>/<code>tool_choice</code>，服务端会自动剔除重试一次；仍失败检查 <code>OPENAI_BASE_URL</code> 要不要带 <code>/v1</code></td></tr>
+<tr><td style="text-align:left">想强制演示模式</td><td style="text-align:left"><code>LLM_MODE=mock</code> 或 <code>FORCE_MOCK=1</code></td></tr>
+<tr><td style="text-align:left">模拟数据丢失</td><td style="text-align:left"><code>node sandbox/gen-fixtures.mjs</code> 重新生成</td></tr>
+<tr><td style="text-align:left">提交时才发现被门禁拒</td><td style="text-align:left">先调 <code>POST /api/script/gate</code> 体检，与提交时是同一套判定</td></tr>
+<tr><td style="text-align:left">批准按钮是灰的</td><td style="text-align:left">你是提交人；换身份，或演示时设 <code>ALLOW_SELF_APPROVAL=1</code></td></tr>
+<tr><td style="text-align:left">执行了但什么都没发生</td><td style="text-align:left">看 <code>simulated: true</code>——当前是 mock 模式</td></tr>
+<tr><td style="text-align:left"><code>local</code> 模式拒绝执行</td><td style="text-align:left">检查 <code>EXEC_ALLOW_LOCAL=true</code> 是否设了</td></tr>
+</tbody></table></div>
+<hr>
+<h2 id="八-一页纸总结">八、一页纸总结</h2>
+<p><strong>能做什么</strong>：分析故障给结论、检查脚本给补丁、只读取证、生成带安全骨架的脚本、 走完"审批→隔离执行"、按角色控制权限、全程留审计。五阶段全部落地，有 74 + 41 + 单元三层测试覆盖。</p>
+<p><strong>使用规则的本质是三句话</strong>：</p>
+<ol><li><strong>AI 只产出建议，落地必须人确认</strong> —— 改脚本要逐条点确认，执行要别人批准。</li><li><strong>危险动作在代码层就被拦住，不依赖提示词</strong> —— 14 条直接拒、4 条需审批、接口不收裸脚本。</li><li><strong>默认什么都不真做</strong> —— <code>mock</code> 零副作用，真实执行必须显式切换模式并满足前置开关。</li></ol>
+<p><strong>必须记住的边界</strong>：数据是模拟的、身份是自报的、默认是模拟执行的、模型是 API 调用的。 这四条决定了它现在是一个<strong>可完整演示与验证流程正确性的工程原型</strong>， 接真实生产还需替换数据源、认证、审批存储与执行后端。</p>
+</article>
+</body>
+</html>
